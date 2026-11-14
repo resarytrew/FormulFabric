@@ -1,0 +1,6 @@
+{
+  "name": "Фабрика чисел",
+  "description": "3D гексагональная головоломка автоматизации и математической инженерии в стиле cel-shading.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
