@@ -134,6 +134,9 @@ export function createWorldFromLevel(
     const existing = machines.get(key);
     if (existing?.locked) continue;
     let cfg = um.config;
+    if (um.type === 'divmod' && level.fixedDivisor !== undefined) {
+      cfg = { ...cfg, divisor: level.fixedDivisor };
+    }
     if (um.type === 'sink' && um.config.sinkId && um.config.targetPattern) {
       const expVals = expectedSinkValues?.[um.config.sinkId];
       const expPolys = expectedSinkPolymers?.[um.config.sinkId];

@@ -949,6 +949,9 @@ export function HexScene3D({
       });
       const gridRingInst = new THREE.InstancedMesh(gridRingGeo, gridRingMat, count);
 
+      const fullDiskCount = 1 + 3 * maxR * (maxR + 1);
+      const hasChasm = count < fullDiskCount;
+
       playableCoords.forEach((c, idx) => {
         const w = hexToWorld(c);
         _dummy.position.set(w.x, 0, w.z);
@@ -961,9 +964,11 @@ export function HexScene3D({
         _dummy.updateMatrix();
         gridRingInst.setMatrixAt(idx, _dummy.matrix);
 
-        _dummy.position.set(w.x, -0.24, w.z);
+        _dummy.position.set(w.x, hasChasm ? -0.42 : -0.24, w.z);
+        _dummy.scale.set(1, hasChasm ? 2.1 : 1, 1);
         _dummy.updateMatrix();
         seamInst.setMatrixAt(idx, _dummy.matrix);
+        _dummy.scale.set(1, 1, 1);
 
         const hash = Math.abs((c.q * 73856093) ^ (c.r * 19349663)) % 100;
         const shade = 0.94 + (hash / 100) * 0.085;
@@ -1065,7 +1070,7 @@ export function HexScene3D({
       sceneryGroup.add(valley.group);
 
       // Multi-tiered rocky underbelly + hanging cables beneath the floating hex platform
-      const underbelly = buildIslandUnderbellyAndCables(maxR, pal);
+      const underbelly = buildIslandUnderbellyAndCables(maxR, pal, hasChasm);
       sceneryGroup.add(underbelly);
 
       // Distant Monument Valley floating terrace mini-islands framed cleanly in sky
@@ -1576,18 +1581,19 @@ export function HexScene3D({
 
       const cx = (minX + maxX) * 0.5;
       const cz = (minZ + maxZ) * 0.5;
-      const halfX = (maxX - minX) * 0.5 + HEX_SIZE * 1.35;
+      const halfX = (maxX - minX) * 0.5 + HEX_SIZE * 1.45;
       const halfZ = (maxZ - minZ) * 0.5 + HEX_SIZE * 1.45;
 
       const vFovRad = THREE.MathUtils.degToRad(camera.fov);
       const tanHalfV = Math.tan(vFovRad * 0.5);
       const aspect = Math.max(0.55, camera.aspect || 1.6);
-      const distV = (halfZ * 1.48) / tanHalfV;
-      const distH = (halfX * 1.32) / (tanHalfV * aspect);
-      const dist = THREE.MathUtils.clamp(Math.max(distV, distH, 13.4), 13.4, 27.5);
+      const distV = (halfZ * 1.54) / tanHalfV;
+      const distH = (halfX * 1.66) / (tanHalfV * aspect);
+      const dist = THREE.MathUtils.clamp(Math.max(distV, distH, 13.8), 13.8, 30.0);
+      const hudOffsetX = halfX > 5.0 ? 1.85 : 0.75;
 
-      autoCamTarget.set(cx, -0.05, cz + 0.3);
-      autoCamPos.set(cx, dist * 0.69, cz + 0.3 + dist * 0.75);
+      autoCamTarget.set(cx + hudOffsetX, -0.05, cz + 0.35);
+      autoCamPos.set(cx + hudOffsetX, dist * 0.69, cz + 0.35 + dist * 0.75);
       autoFrameActive = true;
     }
 

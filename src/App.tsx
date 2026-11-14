@@ -711,7 +711,7 @@ export default function App() {
           altDir: rotateDir(selectedDir, 1),
           rotMode: selectedTool === 'rotator' ? rotatorMode : undefined,
           filterRule: selectedTool === 'filter' ? 'even' : undefined,
-          divisor: selectedTool === 'divmod' ? 2 : undefined,
+          divisor: selectedTool === 'divmod' ? (lvl.fixedDivisor ?? 2) : undefined,
           sequence:
             selectedTool === 'spawner'
               ? parsedSeq.length > 0
@@ -1173,6 +1173,7 @@ export default function App() {
               <MachineInspector
                 block={inspectedBlock}
                 isRunning={isSimPlaying}
+                fixedDivisor={currentLevel.fixedDivisor}
                 onUpdateConfig={handleUpdateMachineConfig}
                 onDelete={handleDeleteBlock}
                 onClose={() => setInspectedCoord(null)}

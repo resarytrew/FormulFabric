@@ -1,15 +1,22 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   Award,
   CheckCircle2,
   Crosshair,
   Lightbulb,
+  Play,
   RotateCcw,
+  Sparkles,
   Target,
   XCircle,
 } from 'lucide-react';
-import type { LevelDefinition, SimulationWorld, VerificationReport } from '../engine/types';
+import type {
+  LevelDefinition,
+  MathRevealSpec,
+  SimulationWorld,
+  VerificationReport,
+} from '../engine/types';
 
 interface OutcomeModalProps {
   mode: 'victory' | 'paused' | 'error';
@@ -108,6 +115,91 @@ function MetricHistogram({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function MathRevealCard({ reveal }: { reveal: MathRevealSpec }) {
+  const [visibleSteps, setVisibleSteps] = useState<number>(1);
+  const [animKey, setAnimKey] = useState<number>(0);
+
+  useEffect(() => {
+    setVisibleSteps(1);
+    const total = reveal.steps.length;
+    if (total <= 1) return;
+
+    const timer = window.setInterval(() => {
+      setVisibleSteps((curr) => {
+        if (curr >= total) {
+          window.clearInterval(timer);
+          return curr;
+        }
+        return curr + 1;
+      });
+    }, 850);
+
+    return () => window.clearInterval(timer);
+  }, [reveal, animKey]);
+
+  return (
+    <div
+      data-testid="victory-math-reveal"
+      className="mb-3 rounded-xl border-2 border-[#141e1a] bg-[#f5f3ff] p-3"
+    >
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Sparkles className="w-4 h-4 text-[#7c3aed] shrink-0" />
+          <div className="min-w-0">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-[#5b21b6]">
+              Математическая разгадка
+            </div>
+            <div className="font-display font-extrabold text-sm text-[#141e1a] leading-tight">
+              {reveal.headline}
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setAnimKey((k) => k + 1)}
+          aria-label="Повторить анимацию объяснения"
+          className="cel-btn px-2 py-1 rounded-lg bg-white text-[11px] font-bold text-[#141e1a] flex items-center gap-1 cursor-pointer shrink-0"
+        >
+          <Play className="w-3 h-3 text-[#7c3aed]" />
+          <span>Повторить</span>
+        </button>
+      </div>
+
+      <div key={animKey} className="space-y-1.5">
+        {reveal.steps.slice(0, visibleSteps).map((step, idx) => {
+          const isCurrent = idx === visibleSteps - 1 && visibleSteps <= reveal.steps.length;
+          return (
+            <div
+              key={`${animKey}-${idx}`}
+              className={`math-step-enter rounded-lg border p-2 transition-colors ${
+                isCurrent
+                  ? 'border-[#7c3aed] bg-white'
+                  : 'border-[#141e1a]/20 bg-white/85'
+              }`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-1.5 mb-0.5">
+                <span className="text-[10px] font-bold uppercase tracking-wide text-[#6d28d9]">
+                  {step.label}
+                </span>
+                <span className="font-mono-tabular font-extrabold text-xs px-2 py-0.5 rounded bg-[#ede9fe] text-[#141e1a] border border-[#7c3aed]/30">
+                  {step.expression}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-700 leading-snug">{step.caption}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      {visibleSteps >= reveal.steps.length && (
+        <p className="math-step-enter mt-2 pt-1.5 border-t border-[#7c3aed]/20 text-[11px] font-medium text-[#3b0764] leading-snug">
+          {reveal.summary}
+        </p>
+      )}
     </div>
   );
 }
@@ -250,7 +342,7 @@ export function OutcomeModal({
 
   return (
     <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
-      <div className="cel-panel rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto cel-scroll p-5 sm:p-6">
+      <div className="cel-panel rounded-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto cel-scroll p-5 sm:p-6 pb-4">
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex items-center gap-2.5">
             <CheckCircle2 className="w-7 h-7 text-[#26b557] shrink-0" />
@@ -330,6 +422,8 @@ export function OutcomeModal({
             </div>
           </div>
         </div>
+
+        {level.mathReveal && <MathRevealCard reveal={level.mathReveal} />}
 
         {/* Benchmark Comparison Histograms */}
         {level.targets && (
@@ -413,7 +507,7 @@ export function OutcomeModal({
           </div>
         )}
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="sticky -bottom-4 bg-[#f7faf8] pt-2.5 pb-1 mt-1 border-t border-[#141e1a]/15 flex flex-wrap items-center gap-2">
           {hasNextLevel && (
             <button
               type="button"

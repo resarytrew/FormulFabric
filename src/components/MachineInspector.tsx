@@ -19,6 +19,7 @@ export interface InspectableBlock {
 interface MachineInspectorProps {
   block: InspectableBlock;
   isRunning: boolean;
+  fixedDivisor?: number;
   onUpdateConfig: (coord: AxialCoord, patch: Partial<MachineConfig>) => void;
   onDelete: (coord: AxialCoord) => void;
   onClose: () => void;
@@ -35,6 +36,7 @@ const FILTER_OPTIONS: Array<{ value: FilterRule; label: string }> = [
 export function MachineInspector({
   block,
   isRunning,
+  fixedDivisor,
   onUpdateConfig,
   onDelete,
   onClose,
@@ -175,40 +177,50 @@ export function MachineInspector({
         <div className="flex flex-col gap-2 text-xs">
           <div className="flex items-center justify-between gap-2">
             <span className="font-semibold text-slate-600">Делитель b:</span>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                disabled={isRunning || (block.config.divisor ?? 2) <= 2}
-                aria-label="Уменьшить делитель"
-                onClick={() =>
-                  onUpdateConfig(block.coord, {
-                    divisor: Math.max(2, (block.config.divisor ?? 2) - 1),
-                  })
-                }
-                className="cel-btn w-6 h-6 rounded bg-white font-bold cursor-pointer"
-              >
-                −
-              </button>
+            {fixedDivisor !== undefined ? (
               <span
                 data-testid="inspector-divisor"
-                className="font-mono-tabular font-extrabold w-6 text-center"
+                className="font-mono-tabular font-extrabold px-2 py-0.5 rounded bg-[#ede9fe] text-[#5b21b6] border border-[#141e1a]/30"
+                title="Делитель зафиксирован условием уровня"
               >
-                {block.config.divisor ?? 2}
+                {fixedDivisor} (фикс.)
               </span>
-              <button
-                type="button"
-                disabled={isRunning || (block.config.divisor ?? 2) >= 12}
-                aria-label="Увеличить делитель"
-                onClick={() =>
-                  onUpdateConfig(block.coord, {
-                    divisor: Math.min(12, (block.config.divisor ?? 2) + 1),
-                  })
-                }
-                className="cel-btn w-6 h-6 rounded bg-white font-bold cursor-pointer"
-              >
-                +
-              </button>
-            </div>
+            ) : (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={isRunning || (block.config.divisor ?? 2) <= 2}
+                  aria-label="Уменьшить делитель"
+                  onClick={() =>
+                    onUpdateConfig(block.coord, {
+                      divisor: Math.max(2, (block.config.divisor ?? 2) - 1),
+                    })
+                  }
+                  className="cel-btn w-6 h-6 rounded bg-white font-bold cursor-pointer"
+                >
+                  −
+                </button>
+                <span
+                  data-testid="inspector-divisor"
+                  className="font-mono-tabular font-extrabold w-6 text-center"
+                >
+                  {block.config.divisor ?? 2}
+                </span>
+                <button
+                  type="button"
+                  disabled={isRunning || (block.config.divisor ?? 2) >= 12}
+                  aria-label="Увеличить делитель"
+                  onClick={() =>
+                    onUpdateConfig(block.coord, {
+                      divisor: Math.min(12, (block.config.divisor ?? 2) + 1),
+                    })
+                  }
+                  className="cel-btn w-6 h-6 rounded bg-white font-bold cursor-pointer"
+                >
+                  +
+                </button>
+              </div>
+            )}
           </div>
           <label className="flex items-center justify-between gap-2">
             <span className="font-semibold text-slate-600">Порт остатка r:</span>

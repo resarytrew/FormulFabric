@@ -2263,6 +2263,7 @@ export function buildInlaidChannelGroup(
 export function buildIslandUnderbellyAndCables(
   maxRadius: number,
   palette: ThemePalette,
+  hasChasm = false,
 ): THREE.Group {
   const group = new THREE.Group();
   const rockLightMat = createCelMaterial(palette.cliffTop, { roughness: 0.86, metalness: 0.04 });
@@ -2271,33 +2272,35 @@ export function buildIslandUnderbellyAndCables(
 
   const mainRadius = Math.max(3.8, (maxRadius + 1.05) * HEX_SIZE * 1.5);
 
-  // Upper beveled shelf directly supporting the hex deck
-  const upperShelf = new THREE.Mesh(
-    new THREE.CylinderGeometry(mainRadius * 0.96, mainRadius * 0.86, 0.65, 6),
-    rockLightMat,
-  );
-  upperShelf.rotation.y = Math.PI / 6;
-  upperShelf.position.y = -0.64;
-  upperShelf.receiveShadow = true;
-  group.add(upperShelf);
+  if (!hasChasm) {
+    // Upper beveled shelf directly supporting full-disk hex decks
+    const upperShelf = new THREE.Mesh(
+      new THREE.CylinderGeometry(mainRadius * 0.96, mainRadius * 0.86, 0.65, 6),
+      rockLightMat,
+    );
+    upperShelf.rotation.y = Math.PI / 6;
+    upperShelf.position.y = -0.64;
+    upperShelf.receiveShadow = true;
+    group.add(upperShelf);
 
-  // Middle stepped rock tier
-  const midShelf = new THREE.Mesh(
-    new THREE.CylinderGeometry(mainRadius * 0.84, mainRadius * 0.62, 1.3, 6),
-    rockMidMat,
-  );
-  midShelf.rotation.y = Math.PI / 6 + 0.08;
-  midShelf.position.y = -1.56;
-  group.add(midShelf);
+    // Middle stepped rock tier
+    const midShelf = new THREE.Mesh(
+      new THREE.CylinderGeometry(mainRadius * 0.84, mainRadius * 0.62, 1.3, 6),
+      rockMidMat,
+    );
+    midShelf.rotation.y = Math.PI / 6 + 0.08;
+    midShelf.position.y = -1.56;
+    group.add(midShelf);
+  }
 
-  // Deep tapered bedrock keel
+  // Deep tapered bedrock keel (pushed lower on chasm levels so gaps drop straight into canyon)
   const keelCone = new THREE.Mesh(
-    new THREE.ConeGeometry(mainRadius * 0.64, 3.4, 6),
+    new THREE.ConeGeometry(mainRadius * (hasChasm ? 0.56 : 0.64), 3.4, 6),
     rockDeepMat,
   );
   keelCone.rotation.x = Math.PI;
   keelCone.rotation.y = Math.PI / 6 - 0.05;
-  keelCone.position.y = -3.85;
+  keelCone.position.y = hasChasm ? -4.35 : -3.85;
   group.add(keelCone);
 
   // Sculpted asymmetric stone buttress spires around perimeter

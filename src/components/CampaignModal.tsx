@@ -1,6 +1,11 @@
 import { useState } from 'react';
 import { Award, CheckCircle2, X } from 'lucide-react';
-import { ALL_PUZZLE_LEVELS, CAMPAIGN_LEVELS, EUREKA_LEVELS } from '../engine/levels';
+import {
+  ALL_PUZZLE_LEVELS,
+  CAMPAIGN_LEVELS,
+  EUREKA_LEVELS,
+  IMPOSSIBLE_LEVELS,
+} from '../engine/levels';
 import type { LevelDefinition, PuzzleChapter } from '../engine/types';
 
 export interface LevelProgressRecord {
@@ -31,16 +36,23 @@ export function CampaignModal({
   onSelectSandbox,
   onClose,
 }: CampaignModalProps) {
-  const initialChapter: PuzzleChapter = EUREKA_LEVELS.some((l) => l.id === currentLevelId)
-    ? 'eureka'
-    : 'campaign';
+  const initialChapter: PuzzleChapter = IMPOSSIBLE_LEVELS.some((l) => l.id === currentLevelId)
+    ? 'impossible'
+    : EUREKA_LEVELS.some((l) => l.id === currentLevelId)
+      ? 'eureka'
+      : 'campaign';
   const [chapter, setChapter] = useState<PuzzleChapter>(initialChapter);
 
   const visibleLevels: LevelDefinition[] =
-    chapter === 'eureka' ? EUREKA_LEVELS : CAMPAIGN_LEVELS;
+    chapter === 'impossible'
+      ? IMPOSSIBLE_LEVELS
+      : chapter === 'eureka'
+        ? EUREKA_LEVELS
+        : CAMPAIGN_LEVELS;
 
   const campaignDone = CAMPAIGN_LEVELS.filter((l) => progress[l.id]?.completed).length;
   const eurekaDone = EUREKA_LEVELS.filter((l) => progress[l.id]?.completed).length;
+  const impossibleDone = IMPOSSIBLE_LEVELS.filter((l) => progress[l.id]?.completed).length;
 
   return (
     <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
@@ -103,13 +115,35 @@ export function CampaignModal({
               {eurekaDone}/{EUREKA_LEVELS.length}
             </span>
           </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={chapter === 'impossible'}
+            onClick={() => setChapter('impossible')}
+            className={`cel-btn px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-2 ${
+              chapter === 'impossible'
+                ? 'bg-[#7c3aed] text-white'
+                : 'bg-white text-[#141e1a] hover:bg-[#f2f7f4]'
+            }`}
+          >
+            <span>Глава III · Невозможные ({IMPOSSIBLE_LEVELS.length})</span>
+            <span className="font-mono-tabular opacity-90">
+              {impossibleDone}/{IMPOSSIBLE_LEVELS.length}
+            </span>
+          </button>
         </div>
 
         <div className="overflow-y-auto cel-scroll pr-1 grid grid-cols-1 sm:grid-cols-2 gap-3">
           {visibleLevels.map((lvl) => {
             const rec = progress[lvl.id];
             const isCurrent = lvl.id === currentLevelId;
-            const prefix = lvl.chapter === 'eureka' ? `Эврика E${lvl.index}` : `Уровень ${lvl.index}`;
+            const prefix =
+              lvl.chapter === 'impossible'
+                ? `Невозможная №${lvl.index}`
+                : lvl.chapter === 'eureka'
+                  ? `Эврика E${lvl.index}`
+                  : `Уровень ${lvl.index}`;
             const hasHiddenTests = Boolean(lvl.verificationRuns?.some((r) => r.hidden));
             const medals = rec?.medals;
             const medalCount = medals
@@ -135,6 +169,7 @@ export function CampaignModal({
                     <div className="text-[11px] font-semibold text-slate-500 font-mono-tabular">
                       {prefix} · {lvl.tier}
                       {lvl.maxTotalBlocks !== undefined ? ` · Лимит ${lvl.maxTotalBlocks} бл.` : ''}
+                      {lvl.fixedDivisor !== undefined ? ` · ÷${lvl.fixedDivisor} фикс.` : ''}
                       {hasHiddenTests ? ' · Скрытые тесты' : ''}
                     </div>
                     <div className="font-display font-bold text-base text-[#141e1a]">

@@ -208,7 +208,19 @@ export interface OnboardingStep {
 }
 
 export type DifficultyTier = 'Начальный' | 'Средний' | 'Продвинутый';
-export type PuzzleChapter = 'campaign' | 'eureka';
+export type PuzzleChapter = 'campaign' | 'eureka' | 'impossible';
+
+export interface MathRevealStep {
+  label: string;
+  expression: string;
+  caption: string;
+}
+
+export interface MathRevealSpec {
+  headline: string;
+  summary: string;
+  steps: MathRevealStep[];
+}
 
 export interface OptimizationTargets {
   blocksGold: number;
@@ -234,6 +246,8 @@ export interface LevelDefinition {
   /** Hard puzzle constraints: max total player blocks & per-tool quotas */
   maxTotalBlocks?: number;
   partLimits?: Partial<Record<MachineType, number>>;
+  /** Optional fixed divisor b for all divmod blocks in this level (e.g. b = 2) */
+  fixedDivisor?: number;
   maxBlocksBonus?: number;
   maxTicksBonus?: number;
   maxAreaBonus?: number;
@@ -265,6 +279,8 @@ export interface LevelDefinition {
   onboarding?: OnboardingStep[];
   pedagogyNote: string;
   bonusGoalText: string;
+  /** Post-victory animated mathematical explanation */
+  mathReveal?: MathRevealSpec;
   explainQuestion?: {
     prompt: string;
     options: string[];

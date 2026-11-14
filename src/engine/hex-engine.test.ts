@@ -13,8 +13,14 @@ import {
   stepSimulation,
   verifyLevelSolution,
 } from './hex-engine';
-import { ALL_PUZZLE_LEVELS, CAMPAIGN_LEVELS, EUREKA_LEVELS, SANDBOX_LEVEL } from './levels';
-import { hexKey, rotateAroundPivot, rotateAxialOffset } from './hex-math';
+import {
+  ALL_PUZZLE_LEVELS,
+  CAMPAIGN_LEVELS,
+  EUREKA_LEVELS,
+  IMPOSSIBLE_LEVELS,
+  SANDBOX_LEVEL,
+} from './levels';
+import { hexDistance, hexKey, rotateAroundPivot, rotateAxialOffset } from './hex-math';
 import type { LevelDefinition, MachineType, TargetPattern } from './types';
 
 test('signed integer arithmetic and exact div2 parity including negative numbers and zero', () => {
@@ -375,9 +381,11 @@ test('axial 60-degree rotation math is cyclic of order 6', () => {
   assert.deepEqual(back, { q: 2, r: 0 });
 });
 
-test('all Campaign + Eureka demo solutions pass simulation, verification runs, and part quotas', () => {
+test('all Campaign + Eureka + Impossible demo solutions pass simulation, verification runs, and part quotas', () => {
   assert.equal(CAMPAIGN_LEVELS.length, 10);
   assert.equal(EUREKA_LEVELS.length, 9);
+  assert.equal(IMPOSSIBLE_LEVELS.length, 5);
+  assert.equal(ALL_PUZZLE_LEVELS.length, 24);
   for (const level of ALL_PUZZLE_LEVELS) {
     assert.ok(level.demoSolution && level.demoSolution.length > 0, `Level ${level.id} missing demoSolution`);
     assert.ok(level.hints && level.hints.length === 3, `Level ${level.id} must have 3 progressive hints`);
@@ -957,4 +965,57 @@ test('eur-09 splits single 18 via divmod(4) and mul2 into bonded [4 -- 4] withou
   assert.equal(res.world.tick, 5);
   assert.deepEqual(res.world.sinkDeliveries['main'], [[4, 4]]);
 });
+
+test('Chapter III (Impossible) enforces constraints, chasm separation, fixedDivisor, and post-victory mathReveal', () => {
+  assert.equal(IMPOSSIBLE_LEVELS.length, 5);
+
+  for (const lvl of IMPOSSIBLE_LEVELS) {
+    assert.equal(lvl.chapter, 'impossible');
+    assert.ok(lvl.mathReveal && lvl.mathReveal.steps.length >= 2, `${lvl.id} must define animated mathReveal steps`);
+  }
+
+  // imp-01 & imp-02: no duplicator allowed
+  const imp1 = IMPOSSIBLE_LEVELS.find((l) => l.id === 'imp-01')!;
+  const imp2 = IMPOSSIBLE_LEVELS.find((l) => l.id === 'imp-02')!;
+  assert.equal(imp1.availableTools.includes('dup'), false);
+  assert.equal(imp2.availableTools.includes('dup'), false);
+
+  // imp-03: top (r <= -1) and bottom (r >= 1) islands are physically separated by distance >= 2 chasm
+  const imp3 = IMPOSSIBLE_LEVELS.find((l) => l.id === 'imp-03')!;
+  const topHexes = (imp3.customHexes ?? []).filter((c) => c.r <= -1);
+  const botHexes = (imp3.customHexes ?? []).filter((c) => c.r >= 1);
+  assert.ok(topHexes.length >= 7 && botHexes.length >= 7);
+  for (const t of topHexes) {
+    for (const b of botHexes) {
+      assert.ok(hexDistance(t, b) >= 2, `imp-03 chasm violated between (${t.q},${t.r}) and (${b.q},${b.r})`);
+    }
+  }
+  assert.equal((imp3.customHexes ?? []).some((c) => c.r === 0), false);
+
+  // imp-04: left and right islands only connect via locked filter(negative) at (0,0) and destroyer at (0,1);
+  // positive pass-through without double-negation fails immediately into destroyer
+  const imp4 = IMPOSSIBLE_LEVELS.find((l) => l.id === 'imp-04')!;
+  const straightConveyorOnly = [
+    { type: 'conveyor' as const, coord: { q: -2, r: 0 }, config: { dir: 0 as const } },
+    { type: 'conveyor' as const, coord: { q: -1, r: 0 }, config: { dir: 0 as const } },
+    { type: 'conveyor' as const, coord: { q: 1, r: 0 }, config: { dir: 0 as const } },
+    { type: 'conveyor' as const, coord: { q: 2, r: 0 }, config: { dir: 0 as const } },
+  ];
+  const imp4CheatReport = verifyLevelSolution(imp4, straightConveyorOnly, 25);
+  assert.equal(imp4CheatReport.passed, 0, 'Straight conveyor must be shredded by locked negative filter bridge');
+
+  // imp-05: fixedDivisor: 2 blocks changing divmod divisor to 7 (8 = 7*1 + 1 cheat), and hidden [7, 10] blocks single-spawner tricks
+  const imp5 = IMPOSSIBLE_LEVELS.find((l) => l.id === 'imp-05')!;
+  assert.equal(imp5.fixedDivisor, 2);
+  const cheatDiv7 = [
+    { type: 'conveyor' as const, coord: { q: -2, r: 1 }, config: { dir: 5 as const } },
+    { type: 'conveyor' as const, coord: { q: -1, r: 0 }, config: { dir: 0 as const } },
+    { type: 'divmod' as const, coord: { q: 0, r: 0 }, config: { dir: 0 as const, altDir: 5 as const, divisor: 7 } },
+    { type: 'welder' as const, coord: { q: 1, r: -1 }, config: { dir: 1 as const } },
+    { type: 'conveyor' as const, coord: { q: 1, r: 0 }, config: { dir: 0 as const } },
+  ];
+  const cheatReport = verifyLevelSolution(imp5, cheatDiv7, 30);
+  assert.equal(cheatReport.passed, 0, 'imp-05 must reject divisor=7 bypass via fixedDivisor: 2');
+});
+
 

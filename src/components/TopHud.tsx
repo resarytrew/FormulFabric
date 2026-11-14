@@ -73,7 +73,9 @@ export function TopHud({
       ? 'Песочница'
       : level.chapter === 'eureka'
         ? `Эврика E${level.index}`
-        : `Уровень ${level.index}`;
+        : level.chapter === 'impossible'
+          ? `Невозм. N${level.index}`
+          : `Уровень ${level.index}`;
 
   const atBlockLimit =
     level.maxTotalBlocks !== undefined && playerBlockCount >= level.maxTotalBlocks;
