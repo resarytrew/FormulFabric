@@ -41,6 +41,7 @@ export const SOLID_MACHINE_TYPES: ReadonlySet<MachineType> = new Set([
   'pusher',
   'magnet',
   'rotator',
+  'swapper',
 ]);
 
 export function createMachineInstance(
@@ -69,6 +70,12 @@ export function createMachineInstance(
             expectedValues: config.targetPattern.expectedValues
               ? [...config.targetPattern.expectedValues]
               : undefined,
+            expectedNodeValues: config.targetPattern.expectedNodeValues
+              ? config.targetPattern.expectedNodeValues.map((row) => [...row])
+              : undefined,
+            ladderStep: config.targetPattern.ladderStep
+              ? { ...config.targetPattern.ladderStep }
+              : undefined,
           }
         : undefined,
     },
@@ -91,6 +98,10 @@ export function createWorldFromLevel(
 ): SimulationWorld {
   const hexes = level.customHexes ?? generateHexDisk(level.radius);
   const platformHexes = new Set<HexKey>(hexes.map(hexKey));
+  const narrowGapHexes = new Set<HexKey>((level.narrowGaps ?? []).map(hexKey));
+  for (const gk of narrowGapHexes) {
+    platformHexes.add(gk);
+  }
   const machines = new Map<HexKey, MachineInstance>();
 
   let machineSeq = 1;
@@ -130,7 +141,7 @@ export function createWorldFromLevel(
 
   for (const um of playerMachines) {
     const key = hexKey(um.coord);
-    if (!platformHexes.has(key)) continue;
+    if (!platformHexes.has(key) || narrowGapHexes.has(key)) continue;
     const existing = machines.get(key);
     if (existing?.locked) continue;
     let cfg = um.config;
@@ -184,10 +195,12 @@ export function createWorldFromLevel(
     tick: 0,
     status: 'idle',
     platformHexes,
+    narrowGapHexes,
     machines,
     tokens: new Map(),
     bonds: [],
     events: [],
+    nextEventId: 1,
     deliveredCount: 0,
     requiredDeliveries,
     infiniteMode: Boolean(level.infiniteMode),
@@ -333,16 +346,30 @@ type ComponentIntent =
       sourceMachineType: MachineType;
     }
   | {
+      kind: 'jump';
+      dir: HexDir;
+      signature: string;
+      sourceCoord: AxialCoord;
+      sourceMachineType: MachineType;
+    }
+  | {
       kind: 'rotate';
       pivot: AxialCoord;
       cwSteps: 1 | -1;
       signature: string;
       sourceCoord: AxialCoord;
       sourceMachineType: MachineType;
+    }
+  | {
+      kind: 'swap';
+      pivot: AxialCoord;
+      signature: string;
+      sourceCoord: AxialCoord;
+      sourceMachineType: MachineType;
     };
 
-function pushEvent(world: SimulationWorld, ev: Omit<SimEvent, 'tick'>) {
-  world.events.push({ tick: world.tick, ...ev });
+function pushEvent(world: SimulationWorld, ev: Omit<SimEvent, 'tick' | 'id'>) {
+  world.events.push({ id: world.nextEventId++, tick: world.tick, ...ev });
   if (world.events.length > 160) {
     world.events.shift();
   }
@@ -459,6 +486,51 @@ export function matchComponentToPattern(
         lastMismatchReason = `Сумма звеньев равна ${sum}, требуется ${pattern.requiredSum}`;
         continue;
       }
+      return { matched: true };
+    }
+
+    if (pattern.mode === 'beam_balance') {
+      if (matchedTokens.length === 3) {
+        // Identify hub node (degree 2 in pattern.edges) or default to middle index 1
+        const deg = [0, 0, 0];
+        for (const e of pattern.edges) {
+          deg[e.fromIdx] = (deg[e.fromIdx] ?? 0) + 1;
+          deg[e.toIdx] = (deg[e.toIdx] ?? 0) + 1;
+        }
+        const hubIdx = deg.indexOf(2) !== -1 ? deg.indexOf(2) : 1;
+        const armIndices = [0, 1, 2].filter((idx) => idx !== hubIdx);
+        const leftVal = matchedTokens[armIndices[0]].value;
+        const rightVal = matchedTokens[armIndices[1]].value;
+        const midVal = matchedTokens[hubIdx].value;
+        if (leftVal !== rightVal) {
+          lastMismatchReason = `Крылья не равны (${leftVal} ≠ ${rightVal})`;
+          continue;
+        }
+        if (midVal !== leftVal + rightVal) {
+          lastMismatchReason = `Центр равен ${midVal}, ожидается сумма крыльев (${leftVal} + ${rightVal} = ${leftVal + rightVal})`;
+          continue;
+        }
+        return { matched: true };
+      }
+      lastMismatchReason = 'Для балки равновесия требуется 3 звена';
+      continue;
+    }
+
+    if (pattern.mode === 'growth_ladder') {
+      const step = pattern.ladderStep;
+      if (!step) return { matched: true };
+      let ladderOk = true;
+      for (let i = 0; i < matchedTokens.length - 1; i++) {
+        const cur = matchedTokens[i].value;
+        const nxt = matchedTokens[i + 1].value;
+        const expectedNext = step.op === 'add' ? cur + step.value : cur * step.value;
+        if (nxt !== expectedNext) {
+          lastMismatchReason = `Шаг роста нарушен: после ${cur} ожидается ${expectedNext}, получено ${nxt}`;
+          ladderOk = false;
+          break;
+        }
+      }
+      if (!ladderOk) continue;
       return { matched: true };
     }
   }
@@ -588,7 +660,11 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
           sourceMachineType: machine.type,
         });
       }
-    } else if (machine.type === 'divmod') {
+    } else if (
+      machine.type === 'divmod' ||
+      machine.type === 'halver' ||
+      machine.type === 'scales'
+    ) {
       const tok = tokenAtHex.get(mKey);
       if (tok) {
         const comp = tokenToComponent.get(tok.id)!;
@@ -596,6 +672,27 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
           kind: 'move',
           dir: machine.config.dir,
           signature: `move:${machine.config.dir}`,
+          sourceCoord: machine.coord,
+          sourceMachineType: machine.type,
+        });
+      }
+    } else if (machine.type === 'jumper') {
+      const tok = tokenAtHex.get(mKey);
+      if (tok) {
+        const comp = tokenToComponent.get(tok.id)!;
+        if (comp.tokenIds.length > 1) {
+          triggerError(
+            world,
+            'Пружина трамплина перегружена: полимер нельзя перебросить целиком',
+            [machine.coord],
+            'error',
+          );
+          return world;
+        }
+        addIntent(comp.id, {
+          kind: 'jump',
+          dir: machine.config.dir,
+          signature: `jump:${machine.config.dir}`,
           sourceCoord: machine.coord,
           sourceMachineType: machine.type,
         });
@@ -644,6 +741,25 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
           sourceMachineType: machine.type,
         });
       }
+    } else if (machine.type === 'swapper') {
+      const hexA = hexNeighbor(machine.coord, machine.config.dir);
+      const hexB = hexNeighbor(machine.coord, oppositeDir(machine.config.dir));
+      const tokA = tokenAtHex.get(hexKey(hexA));
+      const tokB = tokenAtHex.get(hexKey(hexB));
+      const touchedComps = new Set<string>();
+      for (const tok of [tokA, tokB]) {
+        if (!tok) continue;
+        const comp = tokenToComponent.get(tok.id)!;
+        if (touchedComps.has(comp.id)) continue;
+        touchedComps.add(comp.id);
+        addIntent(comp.id, {
+          kind: 'swap',
+          pivot: { ...machine.coord },
+          signature: `swap:${machine.coord.q},${machine.coord.r}`,
+          sourceCoord: machine.coord,
+          sourceMachineType: machine.type,
+        });
+      }
     }
   }
 
@@ -685,6 +801,15 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         proposedCoordByToken.set(id, { ...tok.coord });
       } else if (intent.kind === 'move') {
         proposedCoordByToken.set(id, hexNeighbor(tok.coord, intent.dir));
+      } else if (intent.kind === 'jump') {
+        const step1 = hexNeighbor(tok.coord, intent.dir);
+        proposedCoordByToken.set(id, hexNeighbor(step1, intent.dir));
+      } else if (intent.kind === 'swap') {
+        proposedCoordByToken.set(id, rotateAroundPivot(tok.coord, intent.pivot, 3));
+        rotationInfoByToken.set(id, {
+          pivot: { ...intent.pivot },
+          angleDelta: Math.PI,
+        });
       } else {
         proposedCoordByToken.set(
           id,
@@ -730,6 +855,39 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
     }
   }
 
+  // Check narrow-gap fissure stability on proposed component positions
+  for (const comp of components) {
+    const coords = comp.tokenIds.map((id) => proposedCoordByToken.get(id)!);
+    const overGap = coords.filter((c) => world.narrowGapHexes.has(hexKey(c)));
+    if (overGap.length === 0) continue;
+    const hasSolidAnchor =
+      comp.tokenIds.length >= 2 &&
+      coords.some((c) => {
+        const k = hexKey(c);
+        return world.platformHexes.has(k) && !world.narrowGapHexes.has(k);
+      });
+    if (!hasSolidAnchor) {
+      const gapTokens = comp.tokenIds
+        .map((id) => ({
+          tok: world.tokens.get(id)!,
+          next: proposedCoordByToken.get(id)!,
+        }))
+        .filter((entry) => world.narrowGapHexes.has(hexKey(entry.next)));
+      world.fallingTokens = gapTokens.map((entry) => ({
+        value: entry.tok.value,
+        fromCoord: { ...entry.tok.coord },
+        toCoord: { ...entry.next },
+      }));
+      triggerError(
+        world,
+        'Сфера провалилась в узкий разлом: через него проходит только длинный полимер с опорой на твёрдую плитку',
+        overGap,
+        'collision',
+      );
+      return world;
+    }
+  }
+
   // Check edge swaps (token A moves oldA -> oldB while token B moves oldB -> oldA)
   const tokenIds = Array.from(world.tokens.keys());
   for (let i = 0; i < tokenIds.length; i++) {
@@ -746,13 +904,21 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         hexEqual(new1, old2) &&
         hexEqual(new2, old1)
       ) {
-        triggerError(
-          world,
-          'Встречное столкновение сфер при обмене соседними гексами',
-          [old1, old2],
-          'collision',
-        );
-        return world;
+        const intent1 = resolvedIntentByComp.get(tokenToComponent.get(id1)!.id);
+        const intent2 = resolvedIntentByComp.get(tokenToComponent.get(id2)!.id);
+        const validSwapperPair =
+          intent1?.kind === 'swap' &&
+          intent2?.kind === 'swap' &&
+          hexEqual(intent1.pivot, intent2.pivot);
+        if (!validSwapperPair) {
+          triggerError(
+            world,
+            'Встречное столкновение сфер при обмене соседними гексами',
+            [old1, old2],
+            'collision',
+          );
+          return world;
+        }
       }
     }
   }
@@ -769,8 +935,8 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
   for (const [tKey, ids] of tokensAtProposed.entries()) {
     if (ids.length <= 1) continue;
     const machine = world.machines.get(tKey);
-    const validSimultaneousAdder =
-      machine?.type === 'adder' &&
+    const validSimultaneousTwoInput =
+      (machine?.type === 'adder' || machine?.type === 'scales') &&
       machine.state.memory === null &&
       ids.length === 2 &&
       ids.every((id) => {
@@ -779,14 +945,23 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         return comp.tokenIds.length === 1 && moved;
       });
 
-    if (!validSimultaneousAdder) {
+    if (!validSimultaneousTwoInput) {
       const coord = proposedCoordByToken.get(ids[0])!;
-      triggerError(
-        world,
-        `Столкновение ${ids.length} числовых сфер на гексе (${coord.q}, ${coord.r})`,
-        [coord],
-        'collision',
-      );
+      if ((machine?.type === 'adder' || machine?.type === 'scales') && machine.state.memory !== null) {
+        triggerError(
+          world,
+          `${machine.type === 'adder' ? 'Сумматор Σ' : 'Весы ⚖'} уже хранят число ${machine.state.memory} и не могут принять сразу два новых входа`,
+          [coord],
+          'collision',
+        );
+      } else {
+        triggerError(
+          world,
+          `Столкновение ${ids.length} числовых сфер на гексе (${coord.q}, ${coord.r})`,
+          [coord],
+          'collision',
+        );
+      }
       return world;
     }
   }
@@ -804,6 +979,10 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       let moveSource: TokenMoveSource = 'conveyor';
       if (intent?.kind === 'rotate') {
         moveSource = 'rotator';
+      } else if (intent?.kind === 'jump') {
+        moveSource = 'jump';
+      } else if (intent?.kind === 'swap') {
+        moveSource = 'swap';
       } else if (intent?.sourceMachineType === 'pusher') {
         moveSource = 'pusher';
       } else if (intent?.sourceMachineType === 'magnet') {
@@ -815,6 +994,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
 
   // Flash active actuators that moved components
   const toggledSplitters = new Set<string>();
+  const loggedSwappers = new Set<string>();
   for (const comp of components) {
     const intent = resolvedIntentByComp.get(comp.id);
     if (intent) {
@@ -832,6 +1012,23 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
             message: `Разделитель ⇄: порт ${wasAlt ? 'B → A' : 'A → B'}`,
             severity: 'info',
             badge: '⇄',
+          });
+        } else if (m.type === 'swapper' && !loggedSwappers.has(m.id)) {
+          loggedSwappers.add(m.id);
+          pushEvent(world, {
+            type: 'rotate',
+            coord: m.coord,
+            message: 'Качели-менялка ⇄: разворот на 180°',
+            severity: 'info',
+            badge: '180°⇄',
+          });
+        } else if (m.type === 'jumper') {
+          pushEvent(world, {
+            type: 'move',
+            coord: m.coord,
+            message: 'Трамплин ↷ перебросил сферу через гекс',
+            severity: 'info',
+            badge: '↷',
           });
         }
       }
@@ -996,59 +1193,188 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
     });
   }
 
-  // Process Adder (2-input consumption & memory)
+  // Process Adder & Scales (2-input consumption & memory)
   for (const machine of world.machines.values()) {
-    if (machine.type !== 'adder') continue;
+    if (machine.type !== 'adder' && machine.type !== 'scales') continue;
     const tokensHere = Array.from(world.tokens.values()).filter((t) =>
       hexEqual(t.coord, machine.coord),
     );
     if (tokensHere.length === 0) continue;
 
-    // Simultaneous 2-token arrival
-    if (tokensHere.length === 2) {
-      const [t1, t2] = tokensHere;
-      const sum = t1.value + t2.value;
-      if (!isInRange(sum, world.minValue, world.maxValue)) {
+    if (tokensHere.length > 2 || (tokensHere.length >= 2 && machine.state.memory !== null)) {
+      triggerError(
+        world,
+        `${machine.type === 'adder' ? 'Сумматор Σ' : 'Весы ⚖'} переполнены одновременными входами при занятой памяти`,
+        [machine.coord],
+        'collision',
+      );
+      return world;
+    }
+
+    if (machine.type === 'adder') {
+      // Simultaneous 2-token arrival
+      if (tokensHere.length === 2) {
+        const [t1, t2] = tokensHere;
+        const sum = t1.value + t2.value;
+        if (!isInRange(sum, world.minValue, world.maxValue)) {
+          triggerError(
+            world,
+            `Переполнение сумматора: ${t1.value} + ${t2.value} = ${sum} вне [${world.minValue}, ${world.maxValue}]`,
+            [machine.coord],
+            'error',
+          );
+          return world;
+        }
+        world.tokens.delete(t2.id);
+        t1.value = sum;
+        t1.producedByAdderAtTick = world.tick;
+        machine.state.memory = null;
+        machine.state.activeFlashTicks = 1;
+        machine.state.lastActionTick = world.tick;
+        pushEvent(world, {
+          type: 'transform',
+          coord: machine.coord,
+          message: `Сумматор Σ: ${t1.value - t2.value} + ${t2.value} = ${sum}`,
+          severity: 'success',
+          badge: `Σ=${sum}`,
+        });
+        continue;
+      }
+
+      const tok = tokensHere[0];
+      // Never re-absorb a token produced on this exact tick!
+      if (tok.producedByAdderAtTick === world.tick) {
+        continue;
+      }
+      // Only newly arrived tokens interact with adder
+      if (!movedTokenIds.has(tok.id)) {
+        continue;
+      }
+
+      // Adder rejects bonded polymers
+      const isBonded = world.bonds.some((b) => b.a === tok.id || b.b === tok.id);
+      if (isBonded) {
         triggerError(
           world,
-          `Переполнение сумматора: ${t1.value} + ${t2.value} = ${sum} вне [${world.minValue}, ${world.maxValue}]`,
+          'Сумматор принимает только отдельные несвязанные числа',
           [machine.coord],
           'error',
         );
         return world;
       }
-      world.tokens.delete(t2.id);
-      t1.value = sum;
-      t1.producedByAdderAtTick = world.tick;
+
+      if (machine.state.memory === null) {
+        machine.state.memory = tok.value;
+        world.tokens.delete(tok.id);
+        machine.state.activeFlashTicks = 1;
+        machine.state.lastActionTick = world.tick;
+        pushEvent(world, {
+          type: 'store',
+          coord: machine.coord,
+          message: `Сумматор Σ сохранил первое слагаемое: ${tok.value}`,
+          severity: 'info',
+          badge: `Σ(${tok.value})`,
+        });
+      } else {
+        const first = machine.state.memory;
+        const second = tok.value;
+        const sum = first + second;
+        if (!isInRange(sum, world.minValue, world.maxValue)) {
+          triggerError(
+            world,
+            `Переполнение сумматора: ${first} + ${second} = ${sum} вне [${world.minValue}, ${world.maxValue}]`,
+            [machine.coord],
+            'error',
+          );
+          return world;
+        }
+        machine.state.memory = null;
+        tok.value = sum;
+        tok.producedByAdderAtTick = world.tick;
+        machine.state.activeFlashTicks = 1;
+        machine.state.lastActionTick = world.tick;
+        pushEvent(world, {
+          type: 'transform',
+          coord: machine.coord,
+          message: `Сумматор Σ: ${first} + ${second} = ${sum}`,
+          severity: 'success',
+          badge: `Σ=${sum}`,
+        });
+      }
+      continue;
+    }
+
+    // Scales (Весы-сортировщик ⚖): larger exits dir, smaller spawns onto altDir
+    const emitSortedScales = (a: number, b: number, keepTok: Token, removeTok?: Token) => {
+      if (a === b) {
+        triggerError(
+          world,
+          `Весы в равновесии (${a} = ${b}): равные числа нельзя отсортировать на большее и меньшее`,
+          [machine.coord],
+          'error',
+        );
+        return false;
+      }
+      const altCoord = hexNeighbor(
+        machine.coord,
+        machine.config.altDir ?? rotateDir(machine.config.dir, 1),
+      );
+      const altFree =
+        world.platformHexes.has(hexKey(altCoord)) &&
+        !Array.from(world.tokens.values()).some((t) => hexEqual(t.coord, altCoord)) &&
+        !SOLID_MACHINE_TYPES.has(world.machines.get(hexKey(altCoord))?.type ?? 'conveyor');
+      if (!altFree) {
+        triggerError(
+          world,
+          'Нет свободного гекса для вывода меньшего числа с весов',
+          [machine.coord, altCoord],
+          'blocked',
+        );
+        return false;
+      }
+      const big = Math.max(a, b);
+      const small = Math.min(a, b);
+      if (removeTok) world.tokens.delete(removeTok.id);
       machine.state.memory = null;
+      keepTok.value = big;
+      keepTok.producedByAdderAtTick = world.tick;
+      const smallTok: Token = {
+        id: `t_${world.nextTokenId++}`,
+        value: small,
+        coord: { ...altCoord },
+        prevCoord: { ...machine.coord },
+        moveSource: 'split',
+        spawnOrder: keepTok.spawnOrder,
+      };
+      world.tokens.set(smallTok.id, smallTok);
+      world.visitedHexes.add(hexKey(altCoord));
       machine.state.activeFlashTicks = 1;
       machine.state.lastActionTick = world.tick;
       pushEvent(world, {
         type: 'transform',
         coord: machine.coord,
-        message: `Сумматор Σ: ${t1.value - t2.value} + ${t2.value} = ${sum}`,
+        message: `Весы ⚖: ${big} > ${small}`,
         severity: 'success',
-        badge: `Σ=${sum}`,
+        badge: `${big}|${small}`,
       });
+      return true;
+    };
+
+    if (tokensHere.length === 2) {
+      const [t1, t2] = tokensHere;
+      if (!emitSortedScales(t1.value, t2.value, t1, t2)) return world;
       continue;
     }
 
     const tok = tokensHere[0];
-    // Never re-absorb a token that was produced by this adder!
-    if (tok.producedByAdderAtTick !== undefined) {
-      continue;
-    }
-    // Only newly arrived tokens (or tick 1 initial tokens) interact with adder
-    if (!movedTokenIds.has(tok.id)) {
-      continue;
-    }
+    if (tok.producedByAdderAtTick === world.tick) continue;
+    if (!movedTokenIds.has(tok.id)) continue;
 
-    // Adder rejects bonded polymers
     const isBonded = world.bonds.some((b) => b.a === tok.id || b.b === tok.id);
     if (isBonded) {
       triggerError(
         world,
-        'Сумматор принимает только отдельные несвязанные числа',
+        'Весы-сортировщик принимают только отдельные несвязанные числа',
         [machine.coord],
         'error',
       );
@@ -1063,35 +1389,12 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       pushEvent(world, {
         type: 'store',
         coord: machine.coord,
-        message: `Сумматор Σ сохранил первое слагаемое: ${tok.value}`,
+        message: `Весы ⚖ взвесили первое число: ${tok.value}`,
         severity: 'info',
-        badge: `Σ(${tok.value})`,
+        badge: `⚖(${tok.value})`,
       });
     } else {
-      const first = machine.state.memory;
-      const second = tok.value;
-      const sum = first + second;
-      if (!isInRange(sum, world.minValue, world.maxValue)) {
-        triggerError(
-          world,
-          `Переполнение сумматора: ${first} + ${second} = ${sum} вне [${world.minValue}, ${world.maxValue}]`,
-          [machine.coord],
-          'error',
-        );
-        return world;
-      }
-      machine.state.memory = null;
-      tok.value = sum;
-      tok.producedByAdderAtTick = world.tick;
-      machine.state.activeFlashTicks = 1;
-      machine.state.lastActionTick = world.tick;
-      pushEvent(world, {
-        type: 'transform',
-        coord: machine.coord,
-        message: `Сумматор Σ: ${first} + ${second} = ${sum}`,
-        severity: 'success',
-        badge: `Σ=${sum}`,
-      });
+      if (!emitSortedScales(machine.state.memory, tok.value, tok)) return world;
     }
   }
 
@@ -1196,6 +1499,66 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         severity: 'info',
         badge: `${q} | ${r}`,
       });
+    } else if (machine.type === 'halver') {
+      const isBonded = world.bonds.some((b) => b.a === tok.id || b.b === tok.id);
+      if (isBonded) {
+        triggerError(
+          world,
+          'Раскольник ½ делит только отдельные несвязанные числа',
+          [machine.coord],
+          'error',
+        );
+        return world;
+      }
+      const divRes = getExactDiv2(tok.value);
+      if (!divRes.ok) {
+        triggerError(
+          world,
+          `Число ${tok.value} нечётное — раскольник ½ не может разделить его поровну`,
+          [machine.coord],
+          'error',
+        );
+        return world;
+      }
+      const prev = tok.value;
+      const half = divRes.result;
+      const altCoord = hexNeighbor(
+        machine.coord,
+        machine.config.altDir ?? rotateDir(machine.config.dir, 1),
+      );
+      const altFree =
+        world.platformHexes.has(hexKey(altCoord)) &&
+        !Array.from(world.tokens.values()).some((t) => hexEqual(t.coord, altCoord)) &&
+        !SOLID_MACHINE_TYPES.has(world.machines.get(hexKey(altCoord))?.type ?? 'conveyor');
+      if (!altFree) {
+        triggerError(
+          world,
+          'Нет свободного гекса для второй половины раскольника ½',
+          [machine.coord, altCoord],
+          'blocked',
+        );
+        return world;
+      }
+      tok.value = half;
+      const splitTok: Token = {
+        id: `t_${world.nextTokenId++}`,
+        value: half,
+        coord: { ...altCoord },
+        prevCoord: { ...machine.coord },
+        moveSource: 'split',
+        spawnOrder: tok.spawnOrder,
+      };
+      world.tokens.set(splitTok.id, splitTok);
+      world.visitedHexes.add(hexKey(altCoord));
+      machine.state.activeFlashTicks = 1;
+      machine.state.lastActionTick = world.tick;
+      pushEvent(world, {
+        type: 'transform',
+        coord: machine.coord,
+        message: `Раскольник ½: ${prev} = ${half} + ${half}`,
+        severity: 'success',
+        badge: `${half} + ${half}`,
+      });
     }
   }
 
@@ -1277,6 +1640,36 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
     });
   }
 
+  // Guard against cutting/spawning leaving an unsupported token over a narrow fissure
+  if (world.narrowGapHexes.size > 0) {
+    const gapComponents = getConnectedComponents(world);
+    for (const comp of gapComponents) {
+      const compToks = comp.tokenIds.map((id) => world.tokens.get(id)!);
+      const overGap = compToks.filter((t) => world.narrowGapHexes.has(hexKey(t.coord)));
+      if (overGap.length === 0) continue;
+      const hasSolidAnchor =
+        compToks.length >= 2 &&
+        compToks.some((t) => {
+          const k = hexKey(t.coord);
+          return world.platformHexes.has(k) && !world.narrowGapHexes.has(k);
+        });
+      if (!hasSolidAnchor) {
+        world.fallingTokens = overGap.map((t) => ({
+          value: t.value,
+          fromCoord: { ...t.prevCoord },
+          toCoord: { ...t.coord },
+        }));
+        triggerError(
+          world,
+          'Сфера провалилась в узкий разлом: после разреза или спавна не осталось опоры на твёрдой плитке',
+          overGap.map((t) => t.coord),
+          'collision',
+        );
+        return world;
+      }
+    }
+  }
+
   // Phase 5: Delivery & Victory Check
   const postComponents = getConnectedComponents(world);
   for (const comp of postComponents) {
@@ -1303,7 +1696,6 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
 
         // If sink has expectedValues sequence, verify expected item
         if (pattern.expectedValues && pattern.expectedValues.length > 0) {
-          const hist = world.sinkDeliveries[sinkId] ?? [];
           const stepIdx = hist.length;
           if (stepIdx >= pattern.expectedValues.length) {
             triggerError(
@@ -1321,6 +1713,17 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
             triggerError(
               world,
               `Приёмник ожидал ${pattern.expectedValues[stepIdx]}, получено ${deliveredVals[0]}`,
+              [machine.coord],
+              'error',
+            );
+            return world;
+          }
+        }
+        if (pattern.expectedNodeValues && pattern.expectedNodeValues.length > 0) {
+          if (hist.length >= pattern.expectedNodeValues.length) {
+            triggerError(
+              world,
+              `Лишняя доставка полимера в приёмник ([${deliveredVals.join(' ━━ ')}])`,
               [machine.coord],
               'error',
             );

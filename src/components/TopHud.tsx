@@ -71,11 +71,13 @@ export function TopHud({
   const badgeText =
     level.id === 'sandbox'
       ? 'Песочница'
-      : level.chapter === 'eureka'
-        ? `Эврика E${level.index}`
-        : level.chapter === 'impossible'
-          ? `Невозм. N${level.index}`
-          : `Уровень ${level.index}`;
+      : level.chapter === 'grade5'
+        ? `5 кл. G${level.index}`
+        : level.chapter === 'eureka'
+          ? `Эврика E${level.index}`
+          : level.chapter === 'impossible'
+            ? `Невозм. N${level.index}`
+            : `Уровень ${level.index}`;
 
   const atBlockLimit =
     level.maxTotalBlocks !== undefined && playerBlockCount >= level.maxTotalBlocks;

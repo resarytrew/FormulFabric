@@ -17,6 +17,7 @@ import {
   ALL_PUZZLE_LEVELS,
   CAMPAIGN_LEVELS,
   EUREKA_LEVELS,
+  GRADE5_LEVELS,
   IMPOSSIBLE_LEVELS,
   SANDBOX_LEVEL,
 } from './levels';
@@ -381,11 +382,12 @@ test('axial 60-degree rotation math is cyclic of order 6', () => {
   assert.deepEqual(back, { q: 2, r: 0 });
 });
 
-test('all Campaign + Eureka + Impossible demo solutions pass simulation, verification runs, and part quotas', () => {
+test('all Campaign + Eureka + Impossible + Grade5 demo solutions pass simulation, verification runs, and part quotas', () => {
   assert.equal(CAMPAIGN_LEVELS.length, 10);
   assert.equal(EUREKA_LEVELS.length, 9);
   assert.equal(IMPOSSIBLE_LEVELS.length, 5);
-  assert.equal(ALL_PUZZLE_LEVELS.length, 24);
+  assert.equal(GRADE5_LEVELS.length, 5);
+  assert.equal(ALL_PUZZLE_LEVELS.length, 29);
   for (const level of ALL_PUZZLE_LEVELS) {
     assert.ok(level.demoSolution && level.demoSolution.length > 0, `Level ${level.id} missing demoSolution`);
     assert.ok(level.hints && level.hints.length === 3, `Level ${level.id} must have 3 progressive hints`);
@@ -1017,5 +1019,447 @@ test('Chapter III (Impossible) enforces constraints, chasm separation, fixedDivi
   const cheatReport = verifyLevelSolution(imp5, cheatDiv7, 30);
   assert.equal(cheatReport.passed, 0, 'imp-05 must reject divisor=7 bypass via fixedDivisor: 2');
 });
+
+test('chained adders compute (2 + 3) + 4 = 9 without ignoring results from earlier adders', () => {
+  const level: LevelDefinition = {
+    id: 'chained-adders',
+    index: 99,
+    title: 'Chained Adders',
+    subtitle: '',
+    tier: 'Средний',
+    radius: 3,
+    availableTools: ['adder', 'conveyor', 'sink'],
+    requiredDeliveries: 1,
+    presetMachines: [
+      {
+        type: 'spawner',
+        coord: { q: -3, r: 0 },
+        locked: true,
+        config: { dir: 0, sequence: [2, 3], loopSequence: false, spawnInterval: 1 },
+      },
+      {
+        type: 'conveyor',
+        coord: { q: -2, r: 0 },
+        locked: true,
+        config: { dir: 0 },
+      },
+      {
+        type: 'adder',
+        coord: { q: -1, r: 0 },
+        locked: true,
+        config: { dir: 0 },
+      },
+      {
+        type: 'conveyor',
+        coord: { q: 0, r: 0 },
+        locked: true,
+        config: { dir: 0 },
+      },
+      {
+        type: 'adder',
+        coord: { q: 1, r: 0 },
+        locked: true,
+        config: { dir: 0 },
+      },
+      {
+        type: 'spawner',
+        coord: { q: 1, r: -2 },
+        locked: true,
+        config: { dir: 1, sequence: [4], loopSequence: false, spawnInterval: 5 },
+      },
+      {
+        type: 'conveyor',
+        coord: { q: 1, r: -1 },
+        locked: true,
+        config: { dir: 1 },
+      },
+      {
+        type: 'sink',
+        coord: { q: 2, r: 0 },
+        locked: true,
+        config: {
+          dir: 0,
+          sinkId: 'main',
+          targetPattern: {
+            mode: 'exact',
+            nodes: [{ offset: { q: 0, r: 0 }, value: 9 }],
+            edges: [],
+            rotationInvariant: true,
+            label: '9',
+          },
+        },
+      },
+    ],
+    pedagogyNote: '',
+    bonusGoalText: '',
+  };
+
+  const w = createWorldFromLevel(level);
+  const res = runUntilComplete(w, 25);
+  assert.equal(res.check.passed, true, `Chained adder failed: ${res.check.reason}`);
+  assert.deepEqual(res.world.sinkDeliveries['main'], [[9]]);
+});
+
+test('adder simultaneous 2-token arrival with non-null memory halts with error instead of overwriting memory', () => {
+  const level: LevelDefinition = {
+    id: 'adder-mem-collision',
+    index: 99,
+    title: 'Adder Mem Collision',
+    subtitle: '',
+    tier: 'Средний',
+    radius: 2,
+    availableTools: ['adder'],
+    requiredDeliveries: 1,
+    presetMachines: [
+      {
+        type: 'adder',
+        coord: { q: 0, r: 0 },
+        locked: true,
+        config: { dir: 0 },
+      },
+      {
+        type: 'conveyor',
+        coord: { q: -1, r: 0 },
+        locked: true,
+        config: { dir: 0 },
+      },
+      {
+        type: 'conveyor',
+        coord: { q: 0, r: -1 },
+        locked: true,
+        config: { dir: 1 },
+      },
+    ],
+    pedagogyNote: '',
+    bonusGoalText: '',
+  };
+
+  const w = createWorldFromLevel(level);
+  w.machines.get(hexKey({ q: 0, r: 0 }))!.state.memory = 5;
+  w.tokens.set('a', { id: 'a', value: 2, coord: { q: -1, r: 0 }, prevCoord: { q: -1, r: 0 }, spawnOrder: 1 });
+  w.tokens.set('b', { id: 'b', value: 3, coord: { q: 0, r: -1 }, prevCoord: { q: 0, r: -1 }, spawnOrder: 2 });
+  stepSimulation(w);
+  assert.equal(w.status, 'error');
+  assert.ok(w.errorReason?.includes('Сумматор'));
+});
+
+test('SimEvent.id increases monotonically even after >160 events cap the event ring buffer', () => {
+  const w = createWorldFromLevel(SANDBOX_LEVEL, SANDBOX_LEVEL.demoSolution ?? []);
+  let lastSeenId = 0;
+  for (let i = 0; i < 220; i++) {
+    stepSimulation(w);
+    const newer = w.events.filter((e) => e.id > lastSeenId);
+    for (let j = 1; j < newer.length; j++) {
+      assert.ok(newer[j].id > newer[j - 1].id);
+    }
+    if (newer.length > 0) {
+      lastSeenId = newer[newer.length - 1].id;
+    }
+  }
+  assert.equal(w.events.length, 160);
+  assert.ok(lastSeenId > 160, `Expected SimEvent.id > 160, got ${lastSeenId}`);
+});
+
+test('halver splits even integers equally and halts cleanly on odd integers or bonded polymers', () => {
+  const evenLevel: LevelDefinition = {
+    id: 'halver-test',
+    index: 99,
+    title: 'Halver',
+    subtitle: '',
+    tier: 'Начальный',
+    radius: 2,
+    availableTools: ['halver'],
+    requiredDeliveries: 1,
+    presetMachines: [
+      { type: 'conveyor', coord: { q: -1, r: 0 }, locked: true, config: { dir: 0 } },
+      { type: 'halver', coord: { q: 0, r: 0 }, locked: true, config: { dir: 0, altDir: 1 } },
+    ],
+    pedagogyNote: '',
+    bonusGoalText: '',
+  };
+
+  const wEven = createWorldFromLevel(evenLevel);
+  wEven.tokens.set('t1', { id: 't1', value: 10, coord: { q: -1, r: 0 }, prevCoord: { q: -1, r: 0 }, spawnOrder: 1 });
+  stepSimulation(wEven);
+  assert.equal(wEven.status, 'running');
+  const toks = Array.from(wEven.tokens.values());
+  assert.equal(toks.length, 2);
+  assert.equal(toks[0].value, 5);
+  assert.equal(toks[1].value, 5);
+  assert.ok(toks.some((t) => t.coord.q === 0 && t.coord.r === 0));
+  assert.ok(toks.some((t) => t.coord.q === 0 && t.coord.r === 1));
+
+  const wOdd = createWorldFromLevel(evenLevel);
+  wOdd.tokens.set('t1', { id: 't1', value: 7, coord: { q: -1, r: 0 }, prevCoord: { q: -1, r: 0 }, spawnOrder: 1 });
+  stepSimulation(wOdd);
+  assert.equal(wOdd.status, 'error');
+  assert.ok(wOdd.errorReason?.toLowerCase().includes('раскольник'));
+
+  const wPoly = createWorldFromLevel(evenLevel);
+  wPoly.tokens.set('t1', { id: 't1', value: 4, coord: { q: -1, r: 0 }, prevCoord: { q: -1, r: 0 }, spawnOrder: 1 });
+  wPoly.tokens.set('t2', { id: 't2', value: 6, coord: { q: -1, r: 1 }, prevCoord: { q: -1, r: 1 }, spawnOrder: 2 });
+  wPoly.bonds.push({ a: 't1', b: 't2' });
+  stepSimulation(wPoly);
+  assert.equal(wPoly.status, 'error');
+  assert.ok(wPoly.errorReason?.includes('Раскольник'));
+});
+
+test('swapper exchanges opposing spheres 180 degrees cleanly and jumper leaps 2 hexes over obstacle', () => {
+  const level: LevelDefinition = {
+    id: 'swap-jump-test',
+    index: 99,
+    title: 'Swap & Jump',
+    subtitle: '',
+    tier: 'Средний',
+    radius: 3,
+    availableTools: ['swapper', 'jumper'],
+    requiredDeliveries: 1,
+    presetMachines: [
+      { type: 'swapper', coord: { q: 0, r: 0 }, locked: true, config: { dir: 0 } },
+      { type: 'jumper', coord: { q: -2, r: 1 }, locked: true, config: { dir: 0 } },
+    ],
+    pedagogyNote: '',
+    bonusGoalText: '',
+  };
+
+  const w = createWorldFromLevel(level);
+  w.tokens.set('left', { id: 'left', value: 11, coord: { q: -1, r: 0 }, prevCoord: { q: -1, r: 0 }, spawnOrder: 1 });
+  w.tokens.set('right', { id: 'right', value: 22, coord: { q: 1, r: 0 }, prevCoord: { q: 1, r: 0 }, spawnOrder: 2 });
+  w.tokens.set('leap', { id: 'leap', value: 33, coord: { q: -2, r: 1 }, prevCoord: { q: -2, r: 1 }, spawnOrder: 3 });
+  stepSimulation(w);
+
+  assert.equal(w.status, 'running');
+  assert.deepEqual(w.tokens.get('left')?.coord, { q: 1, r: 0 });
+  assert.deepEqual(w.tokens.get('right')?.coord, { q: -1, r: 0 });
+  assert.ok(Math.abs((w.tokens.get('left')?.rotatedFrom?.angleDelta ?? 0) - Math.PI) < 0.001);
+  assert.deepEqual(w.tokens.get('leap')?.coord, { q: 0, r: 1 });
+  assert.equal(w.tokens.get('leap')?.moveSource, 'jump');
+
+  // Bonded polymer attempting to jump must halt with explicit error
+  const wBond = createWorldFromLevel(level);
+  wBond.tokens.set('b1', { id: 'b1', value: 1, coord: { q: -2, r: 1 }, prevCoord: { q: -2, r: 1 }, spawnOrder: 1 });
+  wBond.tokens.set('b2', { id: 'b2', value: 2, coord: { q: -2, r: 2 }, prevCoord: { q: -2, r: 2 }, spawnOrder: 2 });
+  wBond.bonds.push({ a: 'b1', b: 'b2' });
+  stepSimulation(wBond);
+  assert.equal(wBond.status, 'error');
+  assert.ok(wBond.errorReason?.toLowerCase().includes('трамплин'));
+});
+
+test('scales compares two numbers (max straight, min altDir) and flags equal inputs', () => {
+  const level: LevelDefinition = {
+    id: 'scales-test',
+    index: 99,
+    title: 'Scales',
+    subtitle: '',
+    tier: 'Средний',
+    radius: 2,
+    availableTools: ['scales'],
+    requiredDeliveries: 1,
+    presetMachines: [
+      { type: 'conveyor', coord: { q: -1, r: 0 }, locked: true, config: { dir: 0 } },
+      { type: 'conveyor', coord: { q: 0, r: -1 }, locked: true, config: { dir: 1 } },
+      { type: 'scales', coord: { q: 0, r: 0 }, locked: true, config: { dir: 0, altDir: 1 } },
+    ],
+    pedagogyNote: '',
+    bonusGoalText: '',
+  };
+
+  // Sequential: 4 enters -> stored; then 9 enters -> max=9 at (0,0), min=4 at (0,1)
+  const wSeq = createWorldFromLevel(level);
+  wSeq.tokens.set('a', { id: 'a', value: 4, coord: { q: -1, r: 0 }, prevCoord: { q: -1, r: 0 }, spawnOrder: 1 });
+  stepSimulation(wSeq);
+  assert.equal(wSeq.status, 'running');
+  assert.equal(wSeq.machines.get(hexKey({ q: 0, r: 0 }))?.state.memory, 4);
+
+  wSeq.tokens.set('b', { id: 'b', value: 9, coord: { q: 0, r: -1 }, prevCoord: { q: 0, r: -1 }, spawnOrder: 2 });
+  stepSimulation(wSeq);
+  assert.equal(wSeq.status, 'running');
+  assert.equal(wSeq.tokens.get('b')?.value, 9);
+  assert.deepEqual(wSeq.tokens.get('b')?.coord, { q: 0, r: 0 });
+  const minTok = Array.from(wSeq.tokens.values()).find((t) => t.id !== 'b');
+  assert.equal(minTok?.value, 4);
+  assert.deepEqual(minTok?.coord, { q: 0, r: 1 });
+
+  // Simultaneous equal inputs -> explicit error
+  const wEq = createWorldFromLevel(level);
+  wEq.tokens.set('a', { id: 'a', value: 7, coord: { q: -1, r: 0 }, prevCoord: { q: -1, r: 0 }, spawnOrder: 1 });
+  wEq.tokens.set('b', { id: 'b', value: 7, coord: { q: 0, r: -1 }, prevCoord: { q: 0, r: -1 }, spawnOrder: 2 });
+  stepSimulation(wEq);
+  assert.equal(wEq.status, 'error');
+  assert.ok(wEq.errorReason?.includes('равны'));
+});
+
+test('narrowGap tiles drop isolated spheres but support bonded polymers while anchored, plus beam_balance & growth_ladder patterns', () => {
+  // Single sphere on narrowGap falls; bonded polymer survives; cutting it drops unsupported sphere
+  const gapLevel: LevelDefinition = {
+    id: 'gap-physics',
+    index: 99,
+    title: 'Gap Physics',
+    subtitle: '',
+    tier: 'Средний',
+    radius: 2,
+    narrowGaps: [{ q: 1, r: 0 }],
+    availableTools: ['conveyor', 'laser'],
+    requiredDeliveries: 1,
+    presetMachines: [
+      { type: 'conveyor', coord: { q: 0, r: 0 }, locked: true, config: { dir: 0 } },
+    ],
+    pedagogyNote: '',
+    bonusGoalText: '',
+  };
+
+  const wSingle = createWorldFromLevel(gapLevel);
+  wSingle.tokens.set('s1', { id: 's1', value: 5, coord: { q: 0, r: 0 }, prevCoord: { q: 0, r: 0 }, spawnOrder: 1 });
+  stepSimulation(wSingle);
+  assert.equal(wSingle.status, 'error');
+  assert.equal(wSingle.fallingTokens?.length, 1);
+
+  const wBridge = createWorldFromLevel(gapLevel);
+  wBridge.tokens.set('p1', { id: 'p1', value: 4, coord: { q: -1, r: 0 }, prevCoord: { q: -1, r: 0 }, spawnOrder: 1 });
+  wBridge.tokens.set('p2', { id: 'p2', value: 4, coord: { q: 0, r: 0 }, prevCoord: { q: 0, r: 0 }, spawnOrder: 2 });
+  wBridge.bonds.push({ a: 'p1', b: 'p2' });
+  stepSimulation(wBridge); // moves [4--4] to (0,0)--(1,0) over narrowGap!
+  assert.equal(wBridge.status, 'running');
+
+  // beam_balance & growth_ladder matching
+  const balWorld = createWorldFromLevel(gapLevel);
+  balWorld.tokens.set('L', { id: 'L', value: 3, coord: { q: -1, r: 0 }, prevCoord: { q: -1, r: 0 }, spawnOrder: 1 });
+  balWorld.tokens.set('M', { id: 'M', value: 6, coord: { q: 0, r: 0 }, prevCoord: { q: 0, r: 0 }, spawnOrder: 2 });
+  balWorld.tokens.set('R', { id: 'R', value: 3, coord: { q: 1, r: 0 }, prevCoord: { q: 1, r: 0 }, spawnOrder: 3 });
+  balWorld.bonds.push({ a: 'L', b: 'M' }, { a: 'M', b: 'R' });
+  const balPat: TargetPattern = {
+    mode: 'beam_balance',
+    nodes: [{ offset: { q: -1, r: 0 } }, { offset: { q: 0, r: 0 } }, { offset: { q: 1, r: 0 } }],
+    edges: [{ fromIdx: 0, toIdx: 1 }, { fromIdx: 1, toIdx: 2 }],
+    rotationInvariant: true,
+    label: 'L = R',
+  };
+  assert.equal(
+    matchComponentToPattern({ id: 'L', tokenIds: ['L', 'M', 'R'], bondIndices: [0, 1] }, balWorld, { q: 0, r: 0 }, balPat).matched,
+    true,
+  );
+  balWorld.tokens.get('M')!.value = 7;
+  assert.equal(
+    matchComponentToPattern({ id: 'L', tokenIds: ['L', 'M', 'R'], bondIndices: [0, 1] }, balWorld, { q: 0, r: 0 }, balPat).matched,
+    false,
+  );
+
+  const ladPat: TargetPattern = {
+    mode: 'growth_ladder',
+    ladderStep: { op: 'add', value: 2 },
+    nodes: [{ offset: { q: -1, r: 0 } }, { offset: { q: 0, r: 0 } }, { offset: { q: 1, r: 0 } }],
+    edges: [{ fromIdx: 0, toIdx: 1 }, { fromIdx: 1, toIdx: 2 }],
+    rotationInvariant: false,
+    label: '+2',
+  };
+  balWorld.tokens.get('L')!.value = 2;
+  balWorld.tokens.get('M')!.value = 4;
+  balWorld.tokens.get('R')!.value = 6;
+  assert.equal(
+    matchComponentToPattern({ id: 'L', tokenIds: ['L', 'M', 'R'], bondIndices: [0, 1] }, balWorld, { q: 0, r: 0 }, ladPat).matched,
+    true,
+  );
+});
+
+test('Chapter III imp-04 anti-bypass and Chapter IV Grade5 anti-bypass checks enforce authentic solutions', () => {
+  // imp-04: naive neg -> filter -> neg without separating negative vs positive fails on mixed inputs [4, -5, 9, -2]
+  const imp4 = IMPOSSIBLE_LEVELS.find((l) => l.id === 'imp-04')!;
+  const naiveDoubleNeg = [
+    { type: 'conveyor' as const, coord: { q: -2, r: 0 }, config: { dir: 0 as const } },
+    { type: 'neg' as const, coord: { q: -1, r: 0 }, config: { dir: 0 as const } },
+    { type: 'neg' as const, coord: { q: 1, r: 0 }, config: { dir: 0 as const } },
+    { type: 'conveyor' as const, coord: { q: 2, r: 0 }, config: { dir: 0 as const } },
+  ];
+  assert.equal(
+    verifyLevelSolution(imp4, naiveDoubleNeg, 40).passed,
+    0,
+    'imp-04 must reject naive inline neg -> neg bypass on negative inputs',
+  );
+
+  // g5-01: trying to send an unwelded single sphere across narrowGap (1,0) must fail
+  const g51 = GRADE5_LEVELS.find((l) => l.id === 'g5-01')!;
+  const singleWalk = [
+    { type: 'conveyor' as const, coord: { q: -2, r: 0 }, config: { dir: 0 as const } },
+    { type: 'conveyor' as const, coord: { q: -1, r: 0 }, config: { dir: 0 as const } },
+    { type: 'conveyor' as const, coord: { q: 0, r: 0 }, config: { dir: 0 as const } },
+  ];
+  const wg51 = createWorldFromLevel(g51, singleWalk);
+  runUntilComplete(wg51, 20);
+  assert.equal(wg51.status, 'error');
+  assert.ok((wg51.fallingTokens?.length ?? 0) >= 1, 'Single sphere must fall into g5-01 narrowGap');
+
+  // g5-02: wrong 60-degree orientation over sink fails rotationInvariant: false keyhole
+  const g52 = GRADE5_LEVELS.find((l) => l.id === 'g5-02')!;
+  const sinkPat = g52.presetMachines.find((m) => m.type === 'sink')!.config.targetPattern!;
+  const wg52 = createWorldFromLevel(g52);
+  // Target requires (0,-1)=2, (0,0)=4, (-1,1)=2 relative to sink(1,0).
+  // Rotate by 60° CW around (1,0): (1,-1)->(2,-1), (1,0)->(1,0), (0,1)->(0,0)
+  wg52.tokens.set('k1', { id: 'k1', value: 2, coord: { q: 2, r: -1 }, prevCoord: { q: 2, r: -1 }, spawnOrder: 1 });
+  wg52.tokens.set('k2', { id: 'k2', value: 4, coord: { q: 1, r: 0 }, prevCoord: { q: 1, r: 0 }, spawnOrder: 2 });
+  wg52.tokens.set('k3', { id: 'k3', value: 2, coord: { q: 0, r: 0 }, prevCoord: { q: 0, r: 0 }, spawnOrder: 3 });
+  wg52.bonds.push({ a: 'k1', b: 'k2' }, { a: 'k2', b: 'k3' });
+  assert.equal(
+    matchComponentToPattern({ id: 'k1', tokenIds: ['k1', 'k2', 'k3'], bondIndices: [0, 1] }, wg52, { q: 1, r: 0 }, sinkPat).matched,
+    false,
+    'g5-02 keyhole must reject unaligned rotation',
+  );
+
+  // g5-04: open 2-edge triangle (missing 3rd bond) with sum 12 is rejected by 3-edge closed triangle sink
+  const g54 = GRADE5_LEVELS.find((l) => l.id === 'g5-04')!;
+  const triPat = g54.presetMachines.find((m) => m.type === 'sink')!.config.targetPattern!;
+  const wg54 = createWorldFromLevel(g54);
+  wg54.tokens.set('a', { id: 'a', value: 6, coord: { q: 1, r: -1 }, prevCoord: { q: 1, r: -1 }, spawnOrder: 1 });
+  wg54.tokens.set('b', { id: 'b', value: 3, coord: { q: 1, r: 0 }, prevCoord: { q: 1, r: 0 }, spawnOrder: 2 });
+  wg54.tokens.set('c', { id: 'c', value: 3, coord: { q: 0, r: 0 }, prevCoord: { q: 0, r: 0 }, spawnOrder: 3 });
+  wg54.bonds.push({ a: 'a', b: 'b' }, { a: 'b', b: 'c' }); // only 2 edges!
+  assert.equal(
+    matchComponentToPattern({ id: 'a', tokenIds: ['a', 'b', 'c'], bondIndices: [0, 1] }, wg54, { q: 1, r: 0 }, triPat).matched,
+    false,
+    'g5-04 closed triangle sink must reject 2-edge open chain',
+  );
+  wg54.bonds.push({ a: 'a', b: 'c' }); // 3rd closing edge!
+  assert.equal(
+    matchComponentToPattern({ id: 'a', tokenIds: ['a', 'b', 'c'], bondIndices: [0, 1, 2] }, wg54, { q: 1, r: 0 }, triPat).matched,
+    true,
+  );
+
+  // g5-05: straight conveyor bypassing parity filter+sub1 must fail on locked div2(0,0) chasm bridge
+  const g55 = GRADE5_LEVELS.find((l) => l.id === 'g5-05')!;
+  const q0Hexes = (g55.customHexes ?? []).filter((c) => c.q === 0);
+  assert.deepEqual(q0Hexes, [{ q: 0, r: 0 }], 'g5-05 chasm must leave only (0,0) crossing');
+  const straight55 = [
+    { type: 'conveyor' as const, coord: { q: -2, r: 0 }, config: { dir: 0 as const } },
+    { type: 'conveyor' as const, coord: { q: -1, r: 0 }, config: { dir: 0 as const } },
+    { type: 'conveyor' as const, coord: { q: 1, r: 0 }, config: { dir: 0 as const } },
+  ];
+  assert.equal(
+    verifyLevelSolution(g55, straight55, 30).passed,
+    0,
+    'g5-05 must reject straight line without odd-number parity handling',
+  );
+});
+
+test('Chapter IV Grade 5 levels expose complete 4-line briefings, 3-tier hints, mathReveal, and explainQuestion', () => {
+  assert.equal(GRADE5_LEVELS.length, 5);
+  for (const lvl of GRADE5_LEVELS) {
+    assert.ok(lvl.briefing, `${lvl.id} must define 4-line briefing`);
+    assert.ok(lvl.briefing!.intro && lvl.briefing!.intro.length >= 10);
+    assert.ok(lvl.briefing!.example.includes('→'), `${lvl.id} briefing.example must show Before → After`);
+    assert.ok(lvl.briefing!.catch.length >= 10);
+    assert.ok(lvl.briefing!.secret.length >= 10);
+
+    assert.equal(lvl.hints?.length, 3, `${lvl.id} must have 3-tier hints`);
+    assert.ok(lvl.mathReveal && lvl.mathReveal.steps.length >= 2, `${lvl.id} must define mathReveal`);
+
+    assert.ok(lvl.explainQuestion, `${lvl.id} must define post-victory explainQuestion`);
+    assert.ok(lvl.explainQuestion!.options.length >= 2);
+    assert.ok(
+      lvl.explainQuestion!.correctIdx >= 0 &&
+        lvl.explainQuestion!.correctIdx < lvl.explainQuestion!.options.length,
+    );
+    assert.ok(lvl.explainQuestion!.explanation.length >= 10);
+  }
+});
+
 
 

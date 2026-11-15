@@ -138,7 +138,7 @@ export function BottomDock({
     maxTotalBlocks !== undefined && playerBlockCount >= maxTotalBlocks;
 
   return (
-    <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-20 w-[min(980px,96vw)] pointer-events-none flex flex-col items-center">
+    <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-20 w-[min(1140px,96vw)] pointer-events-none flex flex-col items-center">
       {/* Expandable Event Log Drawer */}
       {logOpen && !collapsed && (
         <div className="pointer-events-auto w-full mb-2 cel-panel rounded-xl p-3 max-h-44 overflow-y-auto cel-scroll">
@@ -163,9 +163,9 @@ export function BottomDock({
               {[...events]
                 .reverse()
                 .slice(0, 30)
-                .map((ev, i) => (
+                .map((ev) => (
                   <div
-                    key={`${ev.tick}-${i}`}
+                    key={ev.id}
                     className={`text-xs font-mono-tabular flex items-start gap-2 px-2 py-0.5 rounded ${
                       ev.severity === 'error'
                         ? 'bg-red-100 text-red-900 font-semibold'

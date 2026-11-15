@@ -478,6 +478,7 @@ export function getSoftContactShadowTexture(): THREE.CanvasTexture {
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.userData = { isShared: true };
   cachedContactShadowTex = tex;
   return tex;
 }
@@ -503,6 +504,7 @@ export function getSoftGlowParticleTexture(): THREE.CanvasTexture {
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.userData = { isShared: true };
   cachedDustMoteTex = tex;
   return tex;
 }

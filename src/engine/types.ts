@@ -26,6 +26,10 @@ export type MachineType =
   | 'divmod'
   | 'filter'
   | 'splitter'
+  | 'halver'
+  | 'swapper'
+  | 'jumper'
+  | 'scales'
   | 'destroyer'
   | 'sink';
 
@@ -76,7 +80,9 @@ export type TokenMoveSource =
   | 'magnet'
   | 'rotator'
   | 'spawner'
-  | 'split';
+  | 'split'
+  | 'jump'
+  | 'swap';
 
 export interface Token {
   id: string;
@@ -102,7 +108,7 @@ export interface BondEdge {
   b: string; // Token ID
 }
 
-export type TargetMatchMode = 'exact' | 'sum_shape';
+export type TargetMatchMode = 'exact' | 'sum_shape' | 'beam_balance' | 'growth_ladder';
 
 export interface TargetNodeSpec {
   offset: AxialCoord; // Relative to sink coord (or first node if rotationInvariant)
@@ -121,6 +127,8 @@ export interface TargetPattern {
   rotationInvariant: boolean;
   /** For 'sum_shape' mode (e.g. "Сохрани форму": sum === 10) */
   requiredSum?: number;
+  /** For 'growth_ladder' mode (step along ordered pattern.nodes) */
+  ladderStep?: { op: 'add' | 'mul'; value: number };
   /** For finite stream levels: exact sequence of scalar values expected at this sink */
   expectedValues?: number[];
   /** For multi-node polymer stream levels: per-delivery expected node values matching pattern.nodes */
@@ -144,6 +152,7 @@ export type SimEventType =
   | 'error';
 
 export interface SimEvent {
+  id: number;
   tick: number;
   type: SimEventType;
   coord: AxialCoord;
@@ -160,10 +169,13 @@ export interface SimulationWorld {
   tick: number;
   status: SimStatus;
   platformHexes: Set<HexKey>;
+  /** Narrow fissure tiles: single spheres fall through, >=2-node polymers bridge if >=1 node rests on solid ground */
+  narrowGapHexes: Set<HexKey>;
   machines: Map<HexKey, MachineInstance>;
   tokens: Map<string, Token>;
   bonds: BondEdge[];
   events: SimEvent[];
+  nextEventId: number;
   deliveredCount: number;
   requiredDeliveries: number;
   infiniteMode?: boolean;
@@ -208,7 +220,7 @@ export interface OnboardingStep {
 }
 
 export type DifficultyTier = 'Начальный' | 'Средний' | 'Продвинутый';
-export type PuzzleChapter = 'campaign' | 'eureka' | 'impossible';
+export type PuzzleChapter = 'campaign' | 'eureka' | 'impossible' | 'grade5';
 
 export interface MathRevealStep {
   label: string;
@@ -242,6 +254,8 @@ export interface LevelDefinition {
   radius: number;
   /** Optional custom hex subset instead of full disk (supports chasms/islands) */
   customHexes?: AxialCoord[];
+  /** Narrow chasm fissures that can only be bridged by bonded polymers (>=2 nodes with >=1 on solid ground) */
+  narrowGaps?: AxialCoord[];
   availableTools: MachineType[];
   /** Hard puzzle constraints: max total player blocks & per-tool quotas */
   maxTotalBlocks?: number;
@@ -274,6 +288,13 @@ export interface LevelDefinition {
     expectedSinkValues?: Record<string, number[]>;
     expectedSinkPolymers?: Record<string, number[][]>;
   }>;
+  /** 4-line kid-friendly structured briefing (Goal, Before->After, Catch, Mechanic Secret) */
+  briefing?: {
+    intro?: string;
+    example: string;
+    catch: string;
+    secret: string;
+  };
   /** 3-tier progressive hints (Idea -> Topology -> Key detail) */
   hints?: [string, string, string];
   onboarding?: OnboardingStep[];

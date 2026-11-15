@@ -303,6 +303,78 @@ export function MachineInspector({
         </div>
       )}
 
+      {/* Halver Secondary Half Port */}
+      {block.type === 'halver' && (
+        <div className="flex flex-col gap-2 text-xs">
+          <label className="flex items-center justify-between gap-2">
+            <span className="font-semibold text-slate-600">Вторая половина:</span>
+            <select
+              disabled={isRunning}
+              aria-label="Порт второй половины раскольника"
+              value={block.config.altDir ?? rotateDir(block.config.dir, 1)}
+              onChange={(e) =>
+                onUpdateConfig(block.coord, {
+                  altDir: Number(e.target.value) as HexDir,
+                })
+              }
+              className="px-2 py-1 rounded-lg border border-[#141e1a] bg-white font-semibold text-xs cursor-pointer"
+            >
+              {([0, 1, 2, 3, 4, 5] as HexDir[]).map((d) => (
+                <option key={d} value={d}>
+                  {DIR_LABELS_RU[d]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="text-[11px] text-slate-500 leading-snug">
+            Раскалывает чётную одиночную сферу a на две равные (a/2 и a/2). Нечётные и полимеры останавливают линию.
+          </p>
+        </div>
+      )}
+
+      {/* Scales Secondary Min Output Port */}
+      {block.type === 'scales' && (
+        <div className="flex flex-col gap-2 text-xs">
+          <label className="flex items-center justify-between gap-2">
+            <span className="font-semibold text-slate-600">Порт меньшего (min):</span>
+            <select
+              disabled={isRunning}
+              aria-label="Порт меньшего числа весов"
+              value={block.config.altDir ?? rotateDir(block.config.dir, 1)}
+              onChange={(e) =>
+                onUpdateConfig(block.coord, {
+                  altDir: Number(e.target.value) as HexDir,
+                })
+              }
+              className="px-2 py-1 rounded-lg border border-[#141e1a] bg-white font-semibold text-xs cursor-pointer"
+            >
+              {([0, 1, 2, 3, 4, 5] as HexDir[]).map((d) => (
+                <option key={d} value={d}>
+                  {DIR_LABELS_RU[d]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="text-[11px] text-slate-500 leading-snug">
+            Сравнивает два числа: большее (max) идёт по основной стрелке, меньшее (min) — в боковой порт. Равные числа вызывают ошибку.
+          </p>
+        </div>
+      )}
+
+      {/* Swapper Hint */}
+      {block.type === 'swapper' && (
+        <p className="text-[11px] text-slate-500 leading-snug">
+          Разворачивает платформу на 180° и меняет местами сферы спереди (по стрелке) и сзади (с противоположной стороны).
+        </p>
+      )}
+
+      {/* Jumper Hint */}
+      {block.type === 'jumper' && (
+        <p className="text-[11px] text-slate-500 leading-snug">
+          Перебрасывает одиночную сферу на 2 гекса вперёд по стрелке через препятствие, разлом или другую линию. Полимеры не перепрыгивают.
+        </p>
+      )}
+
       {/* Spawner Stream Settings */}
       {block.type === 'spawner' && (
         <div className="flex flex-col gap-2 text-xs">

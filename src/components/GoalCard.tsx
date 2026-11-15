@@ -236,9 +236,24 @@ export function GoalCard({ level, world }: GoalCardProps) {
             const modeLabel =
               pat.mode === 'sum_shape'
                 ? `Форма + сумма${pat.requiredSum !== undefined ? ` (Σ=${pat.requiredSum})` : ''}`
-                : pat.rotationInvariant
-                  ? 'Значение / форма'
-                  : 'Форма + ориентация';
+                : pat.mode === 'beam_balance'
+                  ? 'Баланс: левое = правое, центр = L + R'
+                  : pat.mode === 'growth_ladder'
+                    ? pat.ladderStep
+                      ? `Ступеньки роста (${pat.ladderStep.op === 'add' ? `+${pat.ladderStep.value}` : `×${pat.ladderStep.value}`})`
+                      : 'Ступеньки роста'
+                    : pat.rotationInvariant
+                      ? 'Значение / форма'
+                      : 'Форма + фиксированная ориентация';
+
+            const shortBadge =
+              pat.mode === 'sum_shape'
+                ? 'Σ'
+                : pat.mode === 'beam_balance'
+                  ? '⚖'
+                  : pat.mode === 'growth_ladder'
+                    ? '↗'
+                    : 'Точно';
 
             return (
               <div key={`${sinkKey}-${sIdx}`} className="space-y-1.5">
@@ -252,12 +267,17 @@ export function GoalCard({ level, world }: GoalCardProps) {
                     {pat.label}
                   </span>
                   <span className="text-[10px] font-semibold text-slate-500 shrink-0">
-                    {pat.mode === 'sum_shape' ? 'Σ' : 'Точно'}
+                    {shortBadge}
                   </span>
                 </div>
 
-                <div className="text-[10px] text-slate-600 leading-tight">
-                  {modeLabel}
+                <div className="text-[10px] text-slate-600 leading-tight flex flex-wrap items-center gap-1">
+                  <span>{modeLabel}</span>
+                  {!pat.rotationInvariant && (
+                    <span className="px-1 py-0.5 rounded bg-amber-100 text-amber-900 font-bold border border-amber-300">
+                      🔒 без вращения
+                    </span>
+                  )}
                 </div>
 
                 {pat.expectedValues && pat.expectedValues.length > 0 && (
@@ -277,6 +297,29 @@ export function GoalCard({ level, world }: GoalCardProps) {
                           }`}
                         >
                           {val}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {!pat.expectedValues && pat.expectedNodeValues && pat.expectedNodeValues.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                    {pat.expectedNodeValues.slice(0, 4).map((row, i) => {
+                      const done = i < deliveredForSink;
+                      const current = i === deliveredForSink;
+                      return (
+                        <span
+                          key={`${i}-${row.join('-')}`}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-mono-tabular font-bold border ${
+                            done
+                              ? 'bg-[#26b557] text-white border-[#141e1a]'
+                              : current
+                                ? 'bg-[#fef3c7] text-[#141e1a] border-[#141e1a]'
+                                : 'bg-white text-slate-600 border-[#141e1a]/25'
+                          }`}
+                        >
+                          [{row.join('·')}]
                         </span>
                       );
                     })}

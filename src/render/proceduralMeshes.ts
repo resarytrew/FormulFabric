@@ -14,7 +14,6 @@ import {
   createBillboardSignTexture,
   createCelMaterial,
   createInlaidChannelMaterial,
-  createRiverWaterMaterial,
   createSymbolDecalTexture,
   createTokenNumberTexture,
   getSoftContactShadowTexture,
@@ -202,6 +201,31 @@ function getChevronGeo(): THREE.ExtrudeGeometry {
   return sharedChevronGeo;
 }
 
+let sharedDirArrowGeo: THREE.ExtrudeGeometry | null = null;
+function getDirArrowGeo(): THREE.ExtrudeGeometry {
+  if (sharedDirArrowGeo) return sharedDirArrowGeo;
+  const s = new THREE.Shape();
+  s.moveTo(-0.085, -0.115);
+  s.lineTo(0.015, -0.115);
+  s.lineTo(0.14, 0);
+  s.lineTo(0.015, 0.115);
+  s.lineTo(-0.085, 0.115);
+  s.lineTo(-0.02, 0);
+  s.closePath();
+  const geo = new THREE.ExtrudeGeometry(s, {
+    depth: 0.055,
+    bevelEnabled: true,
+    bevelThickness: 0.014,
+    bevelSize: 0.014,
+    bevelSegments: 1,
+  });
+  geo.rotateX(-Math.PI / 2);
+  geo.translate(0, -0.025, 0);
+  geo.userData.isShared = true;
+  sharedDirArrowGeo = geo;
+  return sharedDirArrowGeo;
+}
+
 let sharedCogGeo: THREE.ExtrudeGeometry | null = null;
 function getCogGeo(): THREE.ExtrudeGeometry {
   if (!sharedCogGeo) {
@@ -343,15 +367,14 @@ function createHexPadBase(palette: ThemePalette, color: number, height = 0.14): 
   addInkOutline(padMesh, palette.ink, 0.025);
   group.add(padMesh);
 
-  // Direction indicator wedge on front edge (+X)
-  const dirCone = new THREE.Mesh(
-    new THREE.ConeGeometry(0.115, 0.24, 4),
-    createCelMaterial(palette.accent),
+  // Beveled directional chevron fin on front edge (+X)
+  const dirFin = new THREE.Mesh(
+    getDirArrowGeo(),
+    createCelMaterial(palette.accent, { roughness: 0.38, metalness: 0.15 }),
   );
-  dirCone.rotation.z = -Math.PI / 2;
-  dirCone.position.set(HEX_SIZE * 0.72, height + 0.045, 0);
-  addInkOutline(dirCone, palette.ink, 0.018);
-  group.add(dirCone);
+  dirFin.position.set(HEX_SIZE * 0.7, height + 0.035, 0);
+  addInkOutline(dirFin, palette.ink, 0.014);
+  group.add(dirFin);
 
   return group;
 }
@@ -1580,19 +1603,18 @@ export function buildMachineMesh(
     const altRel =
       ((machine.config.altDir ?? ((machine.config.dir + 1) % 6)) - machine.config.dir + 6) % 6;
     const altAngle = -altRel * (Math.PI / 3);
-    const secCone = new THREE.Mesh(
-      new THREE.ConeGeometry(0.105, 0.23, 4),
-      createCelMaterial(0x38bdf8),
+    const secFin = new THREE.Mesh(
+      getDirArrowGeo(),
+      createCelMaterial(0x38bdf8, { roughness: 0.36, metalness: 0.18 }),
     );
-    secCone.rotation.z = -Math.PI / 2;
-    secCone.rotation.y = altAngle;
-    secCone.position.set(
-      Math.cos(-altAngle) * HEX_SIZE * 0.72,
-      0.18,
-      Math.sin(-altAngle) * HEX_SIZE * 0.72,
+    secFin.rotation.y = altAngle;
+    secFin.position.set(
+      Math.cos(-altAngle) * HEX_SIZE * 0.7,
+      0.175,
+      Math.sin(-altAngle) * HEX_SIZE * 0.7,
     );
-    addInkOutline(secCone, palette.ink, 0.016);
-    root.add(secCone);
+    addInkOutline(secFin, palette.ink, 0.014);
+    root.add(secFin);
 
     const centerGear = new THREE.Mesh(getCogGeo(), createCelMaterial(palette.machineTop));
     centerGear.position.y = 0.18;
@@ -1627,6 +1649,126 @@ export function buildMachineMesh(
       0.46,
       maxAniso,
       machine.state.memory === 1 ? 'ПОРТ B' : 'ПОРТ A',
+    );
+  } else if (type === 'swapper') {
+    // Rotating Twin-Grip Turntable Seesaw (Качели-менялка ⇄)
+    const base = createHexPadBase(palette, palette.machineBase, 0.14);
+    root.add(base);
+
+    const ringRim = new THREE.Mesh(
+      new THREE.TorusGeometry(HEX_SIZE * 0.54, 0.04, 6, 18),
+      createCelMaterial(palette.accentSecondary),
+    );
+    ringRim.rotation.x = Math.PI / 2;
+    ringRim.position.y = 0.16;
+    addInkOutline(ringRim, palette.ink, 0.013);
+    root.add(ringRim);
+
+    const turntable = new THREE.Group();
+    turntable.position.y = 0.19;
+    turntable.userData.animType = 'swapperTurntable';
+
+    const hub = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.28, 0.32, 0.1, 12),
+      createCelMaterial(palette.accent),
+    );
+    addInkOutline(hub, palette.ink, 0.015);
+    turntable.add(hub);
+
+    // Crossbeam reaching toward +X (dir) and -X (oppositeDir) with twin side claws
+    const beam = new THREE.Mesh(
+      new THREE.BoxGeometry(HEX_SIZE * 1.48, 0.075, 0.18),
+      createCelMaterial(palette.machineTop),
+    );
+    beam.position.y = 0.03;
+    addInkOutline(beam, palette.ink, 0.014);
+    turntable.add(beam);
+
+    for (const xSide of [-1, 1]) {
+      const clampArm = new THREE.Mesh(
+        new THREE.BoxGeometry(0.14, 0.16, 0.44),
+        createCelMaterial(palette.sinkGlow),
+      );
+      clampArm.position.set(xSide * HEX_SIZE * 0.72, 0.08, 0);
+      addInkOutline(clampArm, palette.ink, 0.013);
+      turntable.add(clampArm);
+    }
+    root.add(turntable);
+
+    addDecalDisc(root, '⇄', accentStr, '#ffffff', inkStr, 0.25, 0.38, maxAniso, 'ОБМЕН');
+    addOverheadSignSprite(
+      root,
+      '⇄',
+      palette.holoBg,
+      palette.holoText,
+      palette.holoBorder,
+      [0, 0.92, 0],
+      [0.74, 0.4],
+      maxAniso,
+      0.24,
+    );
+  } else if (type === 'jumper') {
+    // Spring-Loaded Hex Leap Catapult (Батут ↷)
+    const base = createHexPadBase(palette, palette.machineBase, 0.14);
+    root.add(base);
+
+    // Side spring anchor rails
+    for (const zSide of [-0.46, 0.46]) {
+      const rail = new THREE.Mesh(
+        new THREE.BoxGeometry(0.92, 0.18, 0.11),
+        createCelMaterial(palette.machineTop),
+      );
+      rail.position.set(0, 0.21, zSide);
+      addInkOutline(rail, palette.ink, 0.014);
+      root.add(rail);
+    }
+
+    // Twin coiled springs beneath angled launch deck
+    const springGroup = new THREE.Group();
+    springGroup.position.set(0, 0.16, 0);
+    springGroup.userData.animType = 'jumperSpring';
+
+    for (const xCoil of [-0.22, 0.2]) {
+      const coil = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.12, 0.14, 0.18, 10),
+        createCelMaterial(palette.sinkGlow),
+      );
+      coil.position.set(xCoil, 0.09, 0);
+      addInkOutline(coil, palette.ink, 0.012);
+      springGroup.add(coil);
+    }
+
+    // Angled catapult plate pitched toward exit dir (+X)
+    const ramp = new THREE.Mesh(
+      new THREE.BoxGeometry(0.94, 0.08, 0.72),
+      createCelMaterial(palette.accent),
+    );
+    ramp.position.set(0.06, 0.22, 0);
+    ramp.rotation.z = 0.28;
+    addInkOutline(ramp, palette.ink, 0.015);
+    springGroup.add(ramp);
+
+    // Chevrons on ramp lip
+    const lip = new THREE.Mesh(
+      new THREE.BoxGeometry(0.14, 0.11, 0.64),
+      createCelMaterial(0xfde047, { emissive: 0xf59e0b, emissiveIntensity: 0.35 }),
+    );
+    lip.position.set(0.45, 0.35, 0);
+    lip.rotation.z = 0.28;
+    addInkOutline(lip, palette.ink, 0.012);
+    springGroup.add(lip);
+
+    root.add(springGroup);
+    addOverheadSignSprite(
+      root,
+      '↷ ×2',
+      palette.holoBg,
+      palette.holoText,
+      palette.holoBorder,
+      [0, 0.98, 0],
+      [0.86, 0.4],
+      maxAniso,
+      0.34,
     );
   } else {
     // Specialized Math & Logic Stations — distinct 3D industrial silhouettes per module family
@@ -1679,6 +1821,8 @@ export function buildMachineMesh(
       adder: 'Σ',
       divmod: `÷${machine.config.divisor ?? 2}`,
       filter: 'Ч/Н',
+      halver: '½',
+      scales: '⚖',
     };
     const filterRuleLabels: Record<string, string> = {
       even: 'ЧЁТ→',
@@ -1688,7 +1832,7 @@ export function buildMachineMesh(
       gt5: '>5→',
     };
     const subLabel =
-      type === 'adder' && machine.state.memory !== null
+      (type === 'adder' || type === 'scales') && machine.state.memory !== null
         ? `M:${machine.state.memory}`
         : type === 'filter'
           ? filterRuleLabels[machine.config.filterRule ?? 'even'] ?? 'ЧЁТ→'
@@ -1698,10 +1842,19 @@ export function buildMachineMesh(
               ? 'КОПИЯ'
               : type === 'divmod'
                 ? 'q | r'
-                : undefined;
+                : type === 'halver'
+                  ? 'a/2 | a/2'
+                  : type === 'scales'
+                    ? 'max | min'
+                    : undefined;
 
     const bgColor =
-      type === 'adder' || type === 'filter' || type === 'dup' || type === 'neg'
+      type === 'adder' ||
+      type === 'filter' ||
+      type === 'dup' ||
+      type === 'neg' ||
+      type === 'halver' ||
+      type === 'scales'
         ? accentStr
         : topStr;
 
@@ -1979,16 +2132,104 @@ export function buildMachineMesh(
         memAura.userData.animType = 'sinkOuterHalo';
         root.add(memAura);
       }
+    } else if (type === 'halver') {
+      // Heavy steel splitting anvil rails + overhead cleaving wedge blade (Раскольник пополам ½)
+      for (const zSide of [-0.52, 0.52]) {
+        const pillar = new THREE.Mesh(
+          new THREE.BoxGeometry(0.16, 0.44, 0.14),
+          createCelMaterial(palette.machineTop),
+        );
+        pillar.position.set(0, 0.34, zSide);
+        addInkOutline(pillar, palette.ink, 0.013);
+        root.add(pillar);
+      }
+      const wedgeGroup = new THREE.Group();
+      wedgeGroup.position.set(0, 0.56, 0);
+      wedgeGroup.userData.animType = 'halverWedge';
+
+      const crossHead = new THREE.Mesh(
+        new THREE.BoxGeometry(0.18, 0.14, 1.12),
+        createCelMaterial(palette.accent),
+      );
+      addInkOutline(crossHead, palette.ink, 0.014);
+      wedgeGroup.add(crossHead);
+
+      const blade = new THREE.Mesh(
+        new THREE.ConeGeometry(0.24, 0.32, 4),
+        createCelMaterial(palette.sinkGlow, { roughness: 0.25, metalness: 0.4 }),
+      );
+      blade.rotation.z = Math.PI;
+      blade.rotation.y = Math.PI / 4;
+      blade.position.y = -0.18;
+      addInkOutline(blade, palette.ink, 0.013);
+      wedgeGroup.add(blade);
+      root.add(wedgeGroup);
+    } else if (type === 'scales') {
+      // Brass Balance Fulcrum + Tilting Beam + Twin Scale Pans (Чаша весов ⚖)
+      const fulcrum = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.06, 0.11, 0.42, 8),
+        createCelMaterial(palette.machineTop),
+      );
+      fulcrum.position.set(-0.36, 0.34, 0);
+      addInkOutline(fulcrum, palette.ink, 0.013);
+      root.add(fulcrum);
+
+      const beamPivot = new THREE.Group();
+      beamPivot.position.set(-0.36, 0.56, 0);
+      beamPivot.userData.animType = 'scalesBeam';
+
+      const crossBeam = new THREE.Mesh(
+        new THREE.BoxGeometry(0.1, 0.07, 0.88),
+        createCelMaterial(palette.sinkGlow),
+      );
+      addInkOutline(crossBeam, palette.ink, 0.012);
+      beamPivot.add(crossBeam);
+
+      for (const zPan of [-0.4, 0.4]) {
+        const pan = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.16, 0.12, 0.06, 10),
+          createCelMaterial(palette.accent),
+        );
+        pan.position.set(0, -0.14, zPan);
+        addInkOutline(pan, palette.ink, 0.011);
+        beamPivot.add(pan);
+      }
+      root.add(beamPivot);
+
+      if (machine.state.memory !== null) {
+        const memOrb = new THREE.Mesh(
+          new THREE.IcosahedronGeometry(0.15, 1),
+          createCelMaterial(palette.sinkGlow, {
+            emissive: 0x38bdf8,
+            emissiveIntensity: 0.72,
+          }),
+        );
+        memOrb.position.set(-0.36, 0.44, 0.4);
+        memOrb.userData.animType = 'memoryOrb';
+        addInkOutline(memOrb, palette.ink, 0.014);
+        root.add(memOrb);
+
+        const memAura = new THREE.Mesh(
+          new THREE.TorusGeometry(HEX_SIZE * 0.74, 0.028, 6, 24),
+          createCelMaterial(0x38bdf8, { emissive: 0x38bdf8, emissiveIntensity: 0.72 }),
+        );
+        memAura.rotation.x = Math.PI / 2;
+        memAura.position.y = 0.12;
+        memAura.userData.animType = 'sinkOuterHalo';
+        root.add(memAura);
+      }
     }
 
-    // Overhead gantry arch + legible sign badge on unary math stations (+1, -1, x2, /2, sqrt, -x)
+    // Overhead gantry arch + legible sign badge on unary & 5th-grade math stations
     if (
       type === 'add1' ||
       type === 'sub1' ||
       type === 'mul2' ||
       type === 'div2' ||
       type === 'sqrt' ||
-      type === 'neg'
+      type === 'neg' ||
+      type === 'halver' ||
+      type === 'scales'
     ) {
       for (const zPost of [-0.56, 0.56]) {
         const archLeg = new THREE.Mesh(
@@ -2020,22 +2261,27 @@ export function buildMachineMesh(
       );
     }
 
-    if (type === 'filter' || type === 'divmod' || type === 'dup') {
+    if (
+      type === 'filter' ||
+      type === 'divmod' ||
+      type === 'dup' ||
+      type === 'halver' ||
+      type === 'scales'
+    ) {
       const altRel = ((machine.config.altDir ?? ((machine.config.dir + 1) % 6)) - machine.config.dir + 6) % 6;
       const altAngle = -altRel * (Math.PI / 3);
-      const secCone = new THREE.Mesh(
-        new THREE.ConeGeometry(0.105, 0.23, 4),
-        createCelMaterial(palette.sinkGlow),
+      const secFin = new THREE.Mesh(
+        getDirArrowGeo(),
+        createCelMaterial(palette.sinkGlow, { roughness: 0.36, metalness: 0.15 }),
       );
-      secCone.rotation.z = -Math.PI / 2;
-      secCone.rotation.y = altAngle;
-      secCone.position.set(
-        Math.cos(-altAngle) * HEX_SIZE * 0.7,
-        0.18,
-        Math.sin(-altAngle) * HEX_SIZE * 0.7,
+      secFin.rotation.y = altAngle;
+      secFin.position.set(
+        Math.cos(-altAngle) * HEX_SIZE * 0.69,
+        0.175,
+        Math.sin(-altAngle) * HEX_SIZE * 0.69,
       );
-      addInkOutline(secCone, palette.ink, 0.016);
-      root.add(secCone);
+      addInkOutline(secFin, palette.ink, 0.014);
+      root.add(secFin);
     }
   }
 
@@ -2150,6 +2396,9 @@ const TRACK_JOIN_TYPES: ReadonlySet<MachineType> = new Set([
   'divmod',
   'filter',
   'splitter',
+  'halver',
+  'scales',
+  'jumper',
   'destroyer',
   'sink',
 ]);
@@ -2169,9 +2418,18 @@ export function buildConveyorConnectorGroup(
   const seamLen = 0.48;
 
   for (const m of machines.values()) {
-    if (!TRACK_JOIN_TYPES.has(m.type) || m.type === 'sink' || m.type === 'destroyer') continue;
+    if (!TRACK_JOIN_TYPES.has(m.type) || m.type === 'sink' || m.type === 'destroyer' || m.type === 'jumper') {
+      continue;
+    }
     const outDirs: HexDir[] = [m.config.dir];
-    if (m.type === 'filter' || m.type === 'divmod' || m.type === 'dup' || m.type === 'splitter') {
+    if (
+      m.type === 'filter' ||
+      m.type === 'divmod' ||
+      m.type === 'dup' ||
+      m.type === 'splitter' ||
+      m.type === 'halver' ||
+      m.type === 'scales'
+    ) {
       outDirs.push(m.config.altDir ?? rotateDir(m.config.dir, 1));
     }
 
@@ -2231,9 +2489,36 @@ export function buildInlaidChannelGroup(
   for (const m of machines.values()) {
     if (m.type === 'sink' || m.type === 'destroyer') continue;
 
+    if (m.type === 'jumper') {
+      const d1 = hexNeighbor(m.coord, m.config.dir);
+      const d2 = hexNeighbor(d1, m.config.dir);
+      if (platformHexes.has(hexKey(d2))) {
+        const wA = hexToWorld(m.coord);
+        const wB = hexToWorld(d2);
+        const longLen = Math.hypot(wB.x - wA.x, wB.z - wA.z);
+        const jumpGeo = new THREE.PlaneGeometry(longLen, 0.14);
+        jumpGeo.rotateX(-Math.PI / 2);
+        const jumpStrip = new THREE.Mesh(jumpGeo, mat);
+        jumpStrip.position.set((wA.x + wB.x) * 0.5, 0.012, (wA.z + wB.z) * 0.5);
+        jumpStrip.rotation.y = dirToWorldYaw(m.config.dir);
+        jumpStrip.renderOrder = 2;
+        group.add(jumpStrip);
+      }
+      continue;
+    }
+
     const outDirs: HexDir[] = [m.config.dir];
-    if (m.type === 'filter' || m.type === 'divmod' || m.type === 'dup' || m.type === 'splitter') {
+    if (
+      m.type === 'filter' ||
+      m.type === 'divmod' ||
+      m.type === 'dup' ||
+      m.type === 'splitter' ||
+      m.type === 'halver' ||
+      m.type === 'scales'
+    ) {
       outDirs.push(m.config.altDir ?? rotateDir(m.config.dir, 1));
+    } else if (m.type === 'swapper') {
+      outDirs.push(oppositeDir(m.config.dir));
     }
 
     const wA = hexToWorld(m.coord);
@@ -2256,657 +2541,13 @@ export function buildInlaidChannelGroup(
   return { group, material: mat };
 }
 
-/**
- * Multi-tiered Tunic / Monument Valley sculpted rocky island foundation with stone shelves,
- * faceted crag spurs, glowing terminal weights, & catenary cables.
- */
-export function buildIslandUnderbellyAndCables(
-  maxRadius: number,
-  palette: ThemePalette,
-  hasChasm = false,
-): THREE.Group {
-  const group = new THREE.Group();
-  const rockLightMat = createCelMaterial(palette.cliffTop, { roughness: 0.86, metalness: 0.04 });
-  const rockMidMat = createCelMaterial(palette.cliffSide, { roughness: 0.88, metalness: 0.04 });
-  const rockDeepMat = createCelMaterial(palette.machineBase, { roughness: 0.9, metalness: 0.06 });
+export {
+  buildBonsaiTreeGroup,
+  buildFloatingMiniIsland,
+  buildIslandUnderbellyAndCables,
+  buildPlatformBeaconPost,
+  buildScenicValleyEnvironment,
+  buildStylizedCloudGroup,
+} from './worldScenery';
 
-  const mainRadius = Math.max(3.8, (maxRadius + 1.05) * HEX_SIZE * 1.5);
-
-  if (!hasChasm) {
-    // Upper beveled shelf directly supporting full-disk hex decks
-    const upperShelf = new THREE.Mesh(
-      new THREE.CylinderGeometry(mainRadius * 0.96, mainRadius * 0.86, 0.65, 6),
-      rockLightMat,
-    );
-    upperShelf.rotation.y = Math.PI / 6;
-    upperShelf.position.y = -0.64;
-    upperShelf.receiveShadow = true;
-    group.add(upperShelf);
-
-    // Middle stepped rock tier
-    const midShelf = new THREE.Mesh(
-      new THREE.CylinderGeometry(mainRadius * 0.84, mainRadius * 0.62, 1.3, 6),
-      rockMidMat,
-    );
-    midShelf.rotation.y = Math.PI / 6 + 0.08;
-    midShelf.position.y = -1.56;
-    group.add(midShelf);
-  }
-
-  // Deep tapered bedrock keel (pushed lower on chasm levels so gaps drop straight into canyon)
-  const keelCone = new THREE.Mesh(
-    new THREE.ConeGeometry(mainRadius * (hasChasm ? 0.56 : 0.64), 3.4, 6),
-    rockDeepMat,
-  );
-  keelCone.rotation.x = Math.PI;
-  keelCone.rotation.y = Math.PI / 6 - 0.05;
-  keelCone.position.y = hasChasm ? -4.35 : -3.85;
-  group.add(keelCone);
-
-  // Sculpted asymmetric stone buttress spires around perimeter
-  for (let i = 0; i < 7; i++) {
-    const a = (i * Math.PI * 2) / 7 + 0.34;
-    const dist = mainRadius * (0.54 + (i % 2) * 0.14);
-    const h = 2.0 + (i % 3) * 0.85;
-    const spire = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.95 + (i % 2) * 0.25, 0.18, h, 6),
-      i % 2 === 0 ? rockMidMat : rockDeepMat,
-    );
-    spire.position.set(Math.cos(a) * dist, -1.25 - h * 0.36, Math.sin(a) * dist);
-    spire.rotation.y = a;
-    group.add(spire);
-  }
-
-  // Hanging catenary cables & glowing survey weights beneath island rim
-  const cableMat = createCelMaterial(palette.ink, { roughness: 0.5, metalness: 0.35 });
-  const weightMat = createCelMaterial(palette.accent, {
-    emissive: palette.accent,
-    emissiveIntensity: 0.35,
-    roughness: 0.35,
-  });
-  for (let c = 0; c < 4; c++) {
-    const a0 = c * 1.57 + 0.45;
-    const a1 = a0 + 0.54;
-    const r = mainRadius * 0.86;
-    const p0 = new THREE.Vector3(Math.cos(a0) * r, -0.75, Math.sin(a0) * r);
-    const pMid = new THREE.Vector3(
-      Math.cos((a0 + a1) * 0.5) * (r + 0.42),
-      -2.3 - (c % 2) * 0.55,
-      Math.sin((a0 + a1) * 0.5) * (r + 0.42),
-    );
-    const p1 = new THREE.Vector3(Math.cos(a1) * (r * 0.7), -1.75, Math.sin(a1) * (r * 0.7));
-    const curve = new THREE.CatmullRomCurve3([p0, pMid, p1]);
-    const cable = new THREE.Mesh(new THREE.TubeGeometry(curve, 14, 0.036, 6, false), cableMat);
-    group.add(cable);
-
-    const terminal = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.18, 8), weightMat);
-    terminal.position.copy(pMid);
-    group.add(terminal);
-  }
-
-  return group;
-}
-
-/**
- * Soft sculpted miniature Tunic-inspired bonsai tree seated flush at y = 0 with contact shadow.
- */
-export function buildBonsaiTreeGroup(palette: ThemePalette, seed = 0): THREE.Group {
-  const tree = new THREE.Group();
-  const trunkMat = createCelMaterial(0x7a543a, { roughness: 0.85, metalness: 0.02 });
-  const leafColors =
-    palette.id === 'emerald'
-      ? [0x3eb87a, 0x2f9963, 0x5bd492]
-      : palette.id === 'mono'
-        ? [0x42ad6b, 0x359158, 0x5cc784]
-        : [0x45b877, 0x349c63, 0x62cf8e];
-
-  // Grounding contact shadow disc
-  const shadow = new THREE.Mesh(
-    getSharedContactShadowGeo(),
-    new THREE.MeshBasicMaterial({
-      map: getSoftContactShadowTexture(),
-      transparent: true,
-      opacity: 0.55,
-      depthWrite: false,
-    }),
-  );
-  shadow.scale.set(0.95, 1, 0.95);
-  shadow.position.y = 0.008;
-  tree.add(shadow);
-
-  const mound = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.32, 0.38, 0.08, 12),
-    createCelMaterial(0x52ad73, { roughness: 0.82 }),
-  );
-  mound.position.y = 0.04;
-  mound.receiveShadow = true;
-  tree.add(mound);
-
-  const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.06, 0.105, 0.48, 10),
-    trunkMat,
-  );
-  trunk.position.set(0, 0.27, 0);
-  trunk.rotation.z = (seed % 2 === 0 ? 1 : -1) * 0.13;
-  trunk.castShadow = true;
-  tree.add(trunk);
-
-  const branch = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.036, 0.056, 0.3, 8),
-    trunkMat,
-  );
-  branch.position.set(seed % 2 === 0 ? 0.13 : -0.13, 0.44, 0.05);
-  branch.rotation.z = (seed % 2 === 0 ? -1 : 1) * 0.65;
-  tree.add(branch);
-
-  const puffs: Array<[number, number, number, number]> = [
-    [0, 0.68, 0, 0.3],
-    [0.2, 0.56, 0.08, 0.22],
-    [-0.18, 0.58, -0.09, 0.21],
-    [0.05, 0.78, -0.1, 0.19],
-  ];
-  puffs.forEach(([px, py, pz, r], idx) => {
-    const canopy = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(r, 2),
-      createCelMaterial(leafColors[idx % leafColors.length], {
-        roughness: 0.76,
-        metalness: 0,
-      }),
-    );
-    canopy.position.set(px, py, pz);
-    canopy.scale.set(1.15, 0.78, 1.15);
-    canopy.castShadow = true;
-    canopy.receiveShadow = true;
-    tree.add(canopy);
-  });
-
-  return tree;
-}
-
-/**
- * Distant Monument Valley floating terrace island with layered cliff & bonsai tree.
- */
-export function buildFloatingMiniIsland(palette: ThemePalette, seed = 0): THREE.Group {
-  const island = new THREE.Group();
-  const top = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.26, 1.08, 0.34, 6),
-    createCelMaterial(palette.cliffTop, { roughness: 0.85 }),
-  );
-  top.position.y = 0.17;
-  island.add(top);
-
-  const mid = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.06, 0.74, 0.42, 6),
-    createCelMaterial(palette.cliffSide, { roughness: 0.88 }),
-  );
-  mid.position.y = -0.21;
-  island.add(mid);
-
-  const under = new THREE.Mesh(
-    new THREE.ConeGeometry(0.76, 1.25, 6),
-    createCelMaterial(palette.machineBase, { roughness: 0.9 }),
-  );
-  under.rotation.x = Math.PI;
-  under.position.y = -1.04;
-  island.add(under);
-
-  const bonsai = buildBonsaiTreeGroup(palette, seed);
-  bonsai.position.set(0.15, 0.34, -0.1);
-  bonsai.scale.setScalar(0.92);
-  island.add(bonsai);
-
-  return island;
-}
-
-/**
- * Soft matte sculpted cloud cluster with rounded multi-lobe silhouettes and zero dark ink outlines.
- */
-export function buildStylizedCloudGroup(palette: ThemePalette, seed = 0): THREE.Group {
-  const cloud = new THREE.Group();
-  const topMat = createCelMaterial(palette.cloudTop, {
-    roughness: 0.94,
-    metalness: 0,
-    emissive: palette.cloudTop,
-    emissiveIntensity: 0.14,
-  });
-  const baseMat = createCelMaterial(palette.cloudBottom, {
-    roughness: 0.96,
-    metalness: 0,
-    emissive: palette.cloudBottom,
-    emissiveIntensity: 0.08,
-  });
-
-  const puffs: Array<[number, number, number, number, boolean]> = [
-    [0, 0.14, 0, 0.9, true],
-    [-0.78, -0.05, 0.1, 0.65, false],
-    [0.78, -0.06, -0.08, 0.68, false],
-    [0.26, 0.28, 0.2, 0.58, true],
-    [-0.3, 0.2, -0.18, 0.52, true],
-    [0, -0.12, 0.05, 0.74, false],
-  ];
-  const mirror = seed % 2 === 0 ? 1 : -1;
-  for (let i = 0; i < puffs.length; i++) {
-    const [x, y, z, r, isTop] = puffs[i];
-    const m = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), isTop ? topMat : baseMat);
-    m.position.set(x * mirror, y, z);
-    m.scale.set(1.32, 0.64, 1.05);
-    cloud.add(m);
-  }
-  return cloud;
-}
-
-/**
- * Architectural perimeter survey beacon & parapet post mounted on select outer cliff hexes.
- */
-export function buildPlatformBeaconPost(palette: ThemePalette): THREE.Group {
-  const group = new THREE.Group();
-  const baseMat = createCelMaterial(palette.machineBase, { roughness: 0.65, metalness: 0.25 });
-  const trimMat = createCelMaterial(palette.machineTop, { roughness: 0.42, metalness: 0.35 });
-  const glowMat = createCelMaterial(palette.accentSecondary, {
-    emissive: palette.accentSecondary,
-    emissiveIntensity: 0.85,
-    roughness: 0.25,
-  });
-
-  const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.14, 6), baseMat);
-  plinth.position.y = 0.07;
-  group.add(plinth);
-
-  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.065, 0.54, 8), trimMat);
-  mast.position.y = 0.4;
-  group.add(mast);
-
-  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.105, 0.08, 8), baseMat);
-  collar.position.y = 0.56;
-  group.add(collar);
-
-  const beacon = new THREE.Mesh(new THREE.OctahedronGeometry(0.085, 0), glowMat);
-  beacon.position.y = 0.72;
-  group.add(beacon);
-
-  return group;
-}
-
-/**
- * Helper to create a smooth ribbon BufferGeometry along a 3D curve with UVs for river water shader.
- */
-function createRiverRibbonGeometry(
-  curve: THREE.CatmullRomCurve3,
-  segments: number,
-  halfWidth: number,
-): THREE.BufferGeometry {
-  const pts = curve.getSpacedPoints(segments);
-  const positions = new Float32Array((segments + 1) * 2 * 3);
-  const uvs = new Float32Array((segments + 1) * 2 * 2);
-  const indices: number[] = [];
-
-  const tangent = new THREE.Vector3();
-  const side = new THREE.Vector3();
-
-  for (let i = 0; i <= segments; i++) {
-    const t = i / segments;
-    curve.getTangent(t, tangent);
-    side.set(-tangent.z, 0, tangent.x).normalize();
-
-    const widthScale = 1 + Math.sin(t * Math.PI * 3.0) * 0.18;
-    const hw = halfWidth * widthScale;
-
-    const p = pts[i];
-    const vIdx = i * 2;
-    positions[vIdx * 3] = p.x - side.x * hw;
-    positions[vIdx * 3 + 1] = p.y;
-    positions[vIdx * 3 + 2] = p.z - side.z * hw;
-
-    positions[(vIdx + 1) * 3] = p.x + side.x * hw;
-    positions[(vIdx + 1) * 3 + 1] = p.y;
-    positions[(vIdx + 1) * 3 + 2] = p.z + side.z * hw;
-
-    uvs[vIdx * 2] = t;
-    uvs[vIdx * 2 + 1] = 0;
-    uvs[(vIdx + 1) * 2] = t;
-    uvs[(vIdx + 1) * 2 + 1] = 1;
-
-    if (i < segments) {
-      const a = vIdx;
-      const b = vIdx + 1;
-      const c = vIdx + 2;
-      const d = vIdx + 3;
-      indices.push(a, c, b, b, c, d);
-    }
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-  geo.setIndex(indices);
-  geo.computeVertexNormals();
-  return geo;
-}
-
-/**
- * Composite stylized arch bridge spanning the lower-left canyon river bend.
- */
-function buildValleyArchBridge(palette: ThemePalette): THREE.Group {
-  const bridge = new THREE.Group();
-  const stoneDark = createCelMaterial(palette.valleyCliff, { roughness: 0.85, metalness: 0.08 });
-  const stoneTrim = createCelMaterial(palette.valleyCliffTop, { roughness: 0.72, metalness: 0.14 });
-  const deckMat = createCelMaterial(palette.machineTop, { roughness: 0.55, metalness: 0.18 });
-  const beaconMat = createCelMaterial(palette.accentSecondary, {
-    emissive: palette.accentSecondary,
-    emissiveIntensity: 0.75,
-  });
-
-  // Span deck
-  const deck = new THREE.Mesh(new THREE.BoxGeometry(8.8, 0.36, 1.85), stoneTrim);
-  deck.position.y = 1.95;
-  bridge.add(deck);
-
-  const roadTop = new THREE.Mesh(new THREE.BoxGeometry(8.8, 0.08, 1.35), deckMat);
-  roadTop.position.y = 2.15;
-  bridge.add(roadTop);
-
-  // Side parapet walls & glowing lamp posts
-  for (const zSide of [-0.82, 0.82]) {
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(8.8, 0.32, 0.18), stoneDark);
-    rail.position.set(0, 2.26, zSide);
-    bridge.add(rail);
-  }
-  for (const xLamp of [-3.2, 0, 3.2]) {
-    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.3, 0.18), beaconMat);
-    lamp.position.set(xLamp, 2.52, 0.82);
-    bridge.add(lamp);
-  }
-
-  // Three support piers + dual semicircular bridge arches
-  for (const px of [-3.9, 0, 3.9]) {
-    const pier = new THREE.Mesh(new THREE.BoxGeometry(1.15, 3.4, 2.05), stoneDark);
-    pier.position.set(px, 0.35, 0);
-    bridge.add(pier);
-  }
-  for (const ax of [-1.95, 1.95]) {
-    const arch = new THREE.Mesh(
-      new THREE.TorusGeometry(1.5, 0.24, 6, 14, Math.PI),
-      stoneTrim,
-    );
-    arch.position.set(ax, 0.55, 0);
-    bridge.add(arch);
-  }
-
-  return bridge;
-}
-
-/**
- * Distant industrial relay watchtower rising from hillside cliffs.
- */
-function buildValleyRelayTower(palette: ThemePalette, scaleY = 1): THREE.Group {
-  const tower = new THREE.Group();
-  const baseMat = createCelMaterial(palette.valleyCliff, { roughness: 0.84, metalness: 0.14 });
-  const hullMat = createCelMaterial(palette.valleyCliffTop, { roughness: 0.68, metalness: 0.24 });
-  const trimMat = createCelMaterial(palette.machineTop, { roughness: 0.45, metalness: 0.3 });
-  const glowMat = createCelMaterial(palette.accentSecondary, {
-    emissive: palette.accentSecondary,
-    emissiveIntensity: 0.9,
-  });
-  const amberMat = createCelMaterial(palette.accent, {
-    emissive: palette.accent,
-    emissiveIntensity: 0.85,
-  });
-
-  const plinth = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.45, 2.2, 6), baseMat);
-  plinth.position.y = 1.1;
-  tower.add(plinth);
-
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.92, 5.2 * scaleY, 6), hullMat);
-  shaft.position.y = 2.2 + 2.6 * scaleY;
-  tower.add(shaft);
-
-  const topY = 2.2 + 5.2 * scaleY;
-  const deck = new THREE.Mesh(new THREE.CylinderGeometry(1.35, 0.72, 0.68, 6), trimMat);
-  deck.position.y = topY + 0.34;
-  tower.add(deck);
-
-  const coreRing = new THREE.Mesh(new THREE.TorusGeometry(0.95, 0.09, 6, 16), glowMat);
-  coreRing.rotation.x = Math.PI / 2;
-  coreRing.position.y = topY + 0.75;
-  tower.add(coreRing);
-
-  const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.18, 1.6, 6), trimMat);
-  spire.position.y = topY + 1.45;
-  tower.add(spire);
-
-  const beacon = new THREE.Mesh(new THREE.OctahedronGeometry(0.24, 0), amberMat);
-  beacon.position.y = topY + 2.35;
-  tower.add(beacon);
-
-  return tower;
-}
-
-/**
- * Rich stylized 3D canyon valley vista beneath and surrounding the floating hex citadel:
- * winding river, terraced green cliffs, instanced pine groves, arch bridge, relay towers,
- * and distant twilight mountain peaks fading into horizon mist.
- */
-export function buildScenicValleyEnvironment(palette: ThemePalette): {
-  group: THREE.Group;
-  waterMaterial: THREE.ShaderMaterial;
-} {
-  const group = new THREE.Group();
-
-  const canyonFloorMat = createCelMaterial(palette.valleyCliff, {
-    roughness: 0.94,
-    metalness: 0.04,
-  });
-  const cliffWallMat = createCelMaterial(palette.valleyCliffTop, {
-    roughness: 0.86,
-    metalness: 0.06,
-  });
-  const grassMat = createCelMaterial(palette.valleyGrass, {
-    roughness: 0.88,
-    metalness: 0.02,
-  });
-  const mountainMat = createCelMaterial(palette.valleyMountain, {
-    roughness: 0.92,
-    metalness: 0.04,
-  });
-  const waterMaterial = createRiverWaterMaterial(palette.valleyRiver, palette.valleyRiverHighlight);
-
-  // Broad canyon riverbed floor seated deep below the floating island keel
-  const FLOOR_Y = -15.6;
-  const floorPlane = new THREE.Mesh(new THREE.PlaneGeometry(170, 150), canyonFloorMat);
-  floorPlane.rotation.x = -Math.PI / 2;
-  floorPlane.position.set(0, FLOOR_Y, -14);
-  group.add(floorPlane);
-
-  // Main winding river sweeping from lower-left under the bridge around rear-right
-  const mainRiverCurve = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(-36, FLOOR_Y + 0.14, 11),
-    new THREE.Vector3(-20, FLOOR_Y + 0.14, 3.5),
-    new THREE.Vector3(-12.2, FLOOR_Y + 0.14, -2.2),
-    new THREE.Vector3(-3, FLOOR_Y + 0.14, -9.5),
-    new THREE.Vector3(9, FLOOR_Y + 0.14, -15.5),
-    new THREE.Vector3(22, FLOOR_Y + 0.14, -21.5),
-    new THREE.Vector3(38, FLOOR_Y + 0.14, -28),
-  ]);
-  const mainRiverMesh = new THREE.Mesh(
-    createRiverRibbonGeometry(mainRiverCurve, 56, 3.25),
-    waterMaterial,
-  );
-  group.add(mainRiverMesh);
-
-  // Secondary right-flank river bend visible at lower-right viewport corner
-  const eastRiverCurve = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(8, FLOOR_Y + 0.13, 10),
-    new THREE.Vector3(14, FLOOR_Y + 0.13, 2.5),
-    new THREE.Vector3(21, FLOOR_Y + 0.13, -5),
-    new THREE.Vector3(32, FLOOR_Y + 0.13, -13),
-  ]);
-  const eastRiverMesh = new THREE.Mesh(
-    createRiverRibbonGeometry(eastRiverCurve, 28, 2.5),
-    waterMaterial,
-  );
-  group.add(eastRiverMesh);
-
-  // Terraced canyon cliff plateaus & green hillsides flanking the river gorge
-  interface TerraceSpec {
-    x: number;
-    z: number;
-    rx: number;
-    rz: number;
-    h: number;
-    rot: number;
-    hasGrass: boolean;
-  }
-  const terraces: TerraceSpec[] = [
-    // Left foreground & mid-left cliffs
-    { x: -23, z: -4, rx: 8.2, rz: 7.2, h: 3.4, rot: 0.3, hasGrass: true },
-    { x: -26, z: 8, rx: 7.5, rz: 6.5, h: 2.8, rot: -0.2, hasGrass: true },
-    { x: -15, z: 7.2, rx: 5.8, rz: 4.8, h: 2.3, rot: 0.4, hasGrass: true },
-    // Rear-left highlands
-    { x: -18, z: -15.5, rx: 8.8, rz: 7.8, h: 4.5, rot: 0.15, hasGrass: true },
-    { x: -8, z: -22, rx: 8.2, rz: 7.0, h: 3.8, rot: -0.35, hasGrass: true },
-    { x: -28, z: -24, rx: 10.5, rz: 9.5, h: 5.8, rot: 0.5, hasGrass: true },
-    // Center-rear rocky ridge
-    { x: 4, z: -25, rx: 9.2, rz: 7.2, h: 4.2, rot: 0.2, hasGrass: true },
-    // Right highlands & foreground right bank
-    { x: 17, z: -14.5, rx: 8.0, rz: 6.6, h: 3.8, rot: -0.25, hasGrass: true },
-    { x: 26, z: -18, rx: 9.5, rz: 8.0, h: 5.0, rot: 0.4, hasGrass: true },
-    { x: 14.5, z: -4.2, rx: 5.2, rz: 4.6, h: 2.6, rot: 0.1, hasGrass: true },
-    { x: 25, z: 4, rx: 7.5, rz: 7.0, h: 3.4, rot: -0.3, hasGrass: true },
-    { x: 10.5, z: 7.5, rx: 4.6, rz: 4.0, h: 2.1, rot: 0.45, hasGrass: true },
-    // Lower canyon rock step shelves
-    { x: -12, z: -8, rx: 4.8, rz: 4.0, h: 1.6, rot: 0.2, hasGrass: false },
-    { x: 8.5, z: -9.5, rx: 4.6, rz: 3.8, h: 1.5, rot: -0.4, hasGrass: false },
-  ];
-
-  const treeSpots: Array<{ x: number; y: number; z: number; scale: number }> = [];
-
-  terraces.forEach((t, idx) => {
-    const cliff = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.88, 1.08, t.h, 7),
-      idx % 2 === 0 ? cliffWallMat : canyonFloorMat,
-    );
-    cliff.position.set(t.x, FLOOR_Y + t.h * 0.5, t.z);
-    cliff.scale.set(t.rx, 1, t.rz);
-    cliff.rotation.y = t.rot;
-    group.add(cliff);
-
-    if (t.hasGrass) {
-      const grassCap = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.85, 0.9, 0.38, 7),
-        grassMat,
-      );
-      grassCap.position.set(t.x, FLOOR_Y + t.h + 0.18, t.z);
-      grassCap.scale.set(t.rx * 0.96, 1, t.rz * 0.96);
-      grassCap.rotation.y = t.rot;
-      group.add(grassCap);
-
-      // Seed 3-4 stylized valley trees on top of each green plateau
-      const treeCount = 3 + (idx % 2);
-      for (let k = 0; k < treeCount; k++) {
-        const ang = idx * 1.37 + k * 1.9;
-        const rad = 0.25 + ((k * 0.23 + idx * 0.11) % 0.48);
-        const tx = t.x + Math.cos(ang) * t.rx * rad;
-        const tz = t.z + Math.sin(ang) * t.rz * rad;
-        treeSpots.push({
-          x: tx,
-          y: FLOOR_Y + t.h + 0.35,
-          z: tz,
-          scale: 0.78 + ((idx + k) % 4) * 0.16,
-        });
-      }
-    }
-  });
-
-  // Instanced stylized low-poly pine & cypress trees across canyon hillsides
-  if (treeSpots.length > 0) {
-    const trunkGeo = new THREE.CylinderGeometry(0.09, 0.14, 0.55, 6);
-    trunkGeo.translate(0, 0.275, 0);
-    const trunkMat = createCelMaterial(0x523b2c, { roughness: 0.9 });
-    const trunkInst = new THREE.InstancedMesh(trunkGeo, trunkMat, treeSpots.length);
-
-    const crownGeo = new THREE.ConeGeometry(0.56, 1.45, 7);
-    crownGeo.translate(0, 1.1, 0);
-    const crownMat = createCelMaterial(0xffffff, { roughness: 0.82, metalness: 0.02 });
-    const crownInst = new THREE.InstancedMesh(crownGeo, crownMat, treeSpots.length);
-
-    const dummy = new THREE.Object3D();
-    const baseLeaf = new THREE.Color(palette.valleyGrass);
-    const leafCol = new THREE.Color();
-
-    treeSpots.forEach((sp, i) => {
-      dummy.position.set(sp.x, sp.y, sp.z);
-      dummy.rotation.set(0, (i * 1.1) % (Math.PI * 2), 0);
-      dummy.scale.setScalar(sp.scale);
-      dummy.updateMatrix();
-      trunkInst.setMatrixAt(i, dummy.matrix);
-      crownInst.setMatrixAt(i, dummy.matrix);
-
-      const tint = 0.85 + (i % 5) * 0.09;
-      leafCol.copy(baseLeaf).multiplyScalar(tint);
-      crownInst.setColorAt(i, leafCol);
-    });
-    if (crownInst.instanceColor) crownInst.instanceColor.needsUpdate = true;
-    trunkInst.computeBoundingSphere();
-    crownInst.computeBoundingSphere();
-    group.add(trunkInst, crownInst);
-  }
-
-  // Arch bridge crossing the mid-left river bend clearly inside default viewport
-  const bridge = buildValleyArchBridge(palette);
-  bridge.position.set(-12.2, FLOOR_Y + 0.1, -2.2);
-  bridge.rotation.y = -0.62;
-  group.add(bridge);
-
-  // Foreground-left industrial architectural outpost block flanking the bridge
-  const outpost = new THREE.Group();
-  const outpostBody = new THREE.Mesh(
-    new THREE.BoxGeometry(2.6, 2.4, 2.6),
-    cliffWallMat,
-  );
-  outpostBody.position.y = 1.2;
-  const outpostCap = new THREE.Mesh(
-    new THREE.BoxGeometry(2.9, 0.35, 2.9),
-    createCelMaterial(palette.machineTop, { roughness: 0.55, metalness: 0.2 }),
-  );
-  outpostCap.position.y = 2.45;
-  outpost.add(outpostBody, outpostCap);
-  outpost.position.set(-14.2, FLOOR_Y + 2.2, 4.6);
-  outpost.rotation.y = 0.25;
-  group.add(outpost);
-
-  // Distant industrial relay watchtowers framing the valley flanks
-  const leftTower = buildValleyRelayTower(palette, 1.18);
-  leftTower.position.set(-15.5, FLOOR_Y + 4.4, -14.8);
-  group.add(leftTower);
-
-  const rightTower = buildValleyRelayTower(palette, 1.38);
-  rightTower.position.set(16.8, FLOOR_Y + 3.8, -14.2);
-  group.add(rightTower);
-
-  const nearRightPylon = buildValleyRelayTower(palette, 0.72);
-  nearRightPylon.position.set(14.0, FLOOR_Y + 2.5, -3.5);
-  nearRightPylon.scale.setScalar(0.85);
-  group.add(nearRightPylon);
-
-  // Distant faceted mountain ridge silhouetted against the misty twilight horizon
-  const mountainSpecs: Array<[number, number, number, number, number]> = [
-    [-40, -34, 12, 22, 0.2],
-    [-25, -38, 14, 26, 0.7],
-    [-11, -40, 11, 20, 1.1],
-    [4, -42, 15, 25, 0.4],
-    [19, -38, 13, 27, 0.9],
-    [33, -35, 14, 25, 0.3],
-    [44, -30, 12, 20, 1.2],
-    [-42, -18, 11, 17, 0.6],
-    [42, -16, 11, 18, 0.8],
-  ];
-  for (const [mx, mz, mr, mh, rot] of mountainSpecs) {
-    const peak = new THREE.Mesh(new THREE.ConeGeometry(mr, mh, 6), mountainMat);
-    peak.position.set(mx, FLOOR_Y + mh * 0.45, mz);
-    peak.rotation.y = rot;
-    group.add(peak);
-  }
-
-  return { group, waterMaterial };
-}
 

@@ -5,6 +5,7 @@ import {
   type VariantSlotId,
   type VariantSummary,
 } from './components/BottomDock';
+import { BriefingCard } from './components/BriefingCard';
 import { CampaignModal, type LevelProgressRecord } from './components/CampaignModal';
 import { GoalCard } from './components/GoalCard';
 import { HintsDrawer } from './components/HintsDrawer';
@@ -52,7 +53,16 @@ interface PlacedBlock {
 
 interface StoredVariant {
   blocks: PlacedBlock[];
+  blocksSig?: string;
   bestTicks?: number;
+}
+
+function getBlocksSignature(blocks: PlacedBlock[]): string {
+  return blocks
+    .slice()
+    .sort((a, b) => a.coord.q - b.coord.q || a.coord.r - b.coord.r)
+    .map((b) => `${b.type}@${b.coord.q},${b.coord.r}:${JSON.stringify(b.config)}`)
+    .join('|');
 }
 
 type LevelVariantsMap = Record<string, Partial<Record<VariantSlotId, StoredVariant>>>;
@@ -376,11 +386,13 @@ export default function App() {
       });
 
       const slot = activeVariantRef.current;
+      const sig = getBlocksSignature(blocks);
       setVariantsMap((oldVars) => {
         const levelVars = oldVars[lvl.id] ?? {};
         const prevSlot = levelVars[slot];
+        const prevSig = prevSlot ? (prevSlot.blocksSig ?? getBlocksSignature(prevSlot.blocks)) : undefined;
         const nextBest =
-          prevSlot?.bestTicks !== undefined
+          prevSlot?.bestTicks !== undefined && prevSig === sig
             ? Math.min(prevSlot.bestTicks, nextWorld.tick)
             : nextWorld.tick;
         const updatedVars: LevelVariantsMap = {
@@ -389,6 +401,7 @@ export default function App() {
             ...levelVars,
             [slot]: {
               blocks: structuredClone(blocks),
+              blocksSig: sig,
               bestTicks: nextBest,
             },
           },
@@ -563,17 +576,20 @@ export default function App() {
       if (isSimPlaying) return;
       const lvlId = currentLevelRef.current.id;
       const blocksCopy = structuredClone(playerBlocksRef.current);
+      const nextSig = getBlocksSignature(blocksCopy);
       setVariantsMap((old) => {
         const lvlVars = old[lvlId] ?? {};
-        const prevBest = lvlVars[slot]?.bestTicks;
+        const prevSlot = lvlVars[slot];
+        const prevSig = prevSlot ? (prevSlot.blocksSig ?? getBlocksSignature(prevSlot.blocks)) : undefined;
+        const prevBest = prevSlot?.bestTicks;
         const updated: LevelVariantsMap = {
           ...old,
           [lvlId]: {
             ...lvlVars,
             [slot]: {
               blocks: blocksCopy,
-              bestTicks:
-                blocksCopy.length === lvlVars[slot]?.blocks.length ? prevBest : undefined,
+              blocksSig: nextSig,
+              bestTicks: prevSig === nextSig ? prevBest : undefined,
             },
           },
         };
@@ -596,12 +612,12 @@ export default function App() {
       const lvlVars = nextVariants[lvlId] ?? {};
       if (currBlocks.length > 0) {
         const oldSlot = lvlVars[activeVariant];
+        const currSig = getBlocksSignature(currBlocks);
+        const oldSig = oldSlot ? (oldSlot.blocksSig ?? getBlocksSignature(oldSlot.blocks)) : undefined;
         lvlVars[activeVariant] = {
           blocks: currBlocks,
-          bestTicks:
-            oldSlot && oldSlot.blocks.length === currBlocks.length
-              ? oldSlot.bestTicks
-              : undefined,
+          blocksSig: currSig,
+          bestTicks: oldSlot && oldSig === currSig ? oldSlot.bestTicks : undefined,
         };
       }
       nextVariants[lvlId] = lvlVars;
@@ -626,6 +642,17 @@ export default function App() {
       if (!worldRef.current.platformHexes.has(key)) {
         sound.playError();
         showBudgetWarning('Нельзя разместить блок над разломом платформы.');
+        return;
+      }
+      if (
+        worldRef.current.narrowGapHexes.has(key) &&
+        selectedTool !== 'select' &&
+        selectedTool !== 'erase'
+      ) {
+        sound.playError();
+        showBudgetWarning(
+          'Над узким разломом нельзя ставить механизм — через него пройдёт только сцепленный полимер (2+ сферы).',
+        );
         return;
       }
       const existingMachine = worldRef.current.machines.get(key);
@@ -771,6 +798,11 @@ export default function App() {
       if (!worldRef.current.platformHexes.has(toKey)) {
         sound.playError();
         showBudgetWarning('Нельзя перенести блок за пределы платформы.');
+        return;
+      }
+      if (worldRef.current.narrowGapHexes.has(toKey)) {
+        sound.playError();
+        showBudgetWarning('Над узким разломом нельзя разместить механизм.');
         return;
       }
       const destMachine = worldRef.current.machines.get(toKey);
@@ -1146,6 +1178,19 @@ export default function App() {
               {budgetWarning}
             </div>
           )}
+
+          {/* Top-left 10-second 4-line Briefing Card (for levels with structured briefing) */}
+          {appState === 'playing' &&
+            currentLevel.briefing &&
+            !onboardingInfo.step &&
+            world.status !== 'error' &&
+            !levelsModalOpen &&
+            !hintsDrawerOpen &&
+            !helpOpen && (
+              <div className="fixed top-[10.25rem] sm:top-16 left-2.5 z-[24] pointer-events-none">
+                <BriefingCard level={currentLevel} />
+              </div>
+            )}
 
           {/* Top-right Goal & Optimization Cards (tucked cleanly away when Inspector or Error card is visible) */}
           {appState === 'playing' &&

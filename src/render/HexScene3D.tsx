@@ -146,7 +146,7 @@ function disposeObjectTree(obj: THREE.Object3D) {
       const mats = Array.isArray(mat) ? mat : [mat];
       for (const m of mats) {
         const mAny = m as THREE.MeshBasicMaterial & THREE.MeshToonMaterial;
-        if (mAny.map) {
+        if (mAny.map && !mAny.map.userData?.isShared) {
           mAny.map.dispose();
         }
         m.dispose();
@@ -228,8 +228,8 @@ export function HexScene3D({
     addTrauma: (amount: number) => void;
   } | null>(null);
 
-  // Sync grid when platform hex set changes
-  const platformSig = Array.from(world.platformHexes).sort().join(';');
+  // Sync grid when platform hex set or narrow gap fissure set changes
+  const platformSig = `${Array.from(world.platformHexes).sort().join(';')}|GAPS:${Array.from(world.narrowGapHexes).sort().join(';')}`;
   useEffect(() => {
     sceneApiRef.current?.rebuildGrid();
     if (!propsRef.current.isTitleMode) {
@@ -265,13 +265,20 @@ export function HexScene3D({
   }, [machineSig]);
 
   // Reactive 3D VFX bursts, pulse rings, floating operation badges, & camera micro-shake
-  const lastEventIdxRef = useRef(0);
+  const lastEventIdRef = useRef(0);
   useEffect(() => {
-    if (world.events.length < lastEventIdxRef.current) {
-      lastEventIdxRef.current = 0;
+    if (world.tick === 0 || world.events.length === 0) {
+      lastEventIdRef.current = 0;
+      return;
     }
-    const newEvents = world.events.slice(lastEventIdxRef.current);
-    lastEventIdxRef.current = world.events.length;
+    const maxEvId = world.events[world.events.length - 1].id;
+    // Handle step-back / rewind safely
+    if (maxEvId < lastEventIdRef.current) {
+      lastEventIdRef.current = maxEvId;
+      return;
+    }
+    const newEvents = world.events.filter((ev) => ev.id > lastEventIdRef.current);
+    lastEventIdRef.current = maxEvId;
     for (const ev of newEvents) {
       const w = hexToWorld(ev.coord);
       if (ev.type === 'deliver' || ev.type === 'weld' || ev.type === 'spawn' || ev.type === 'cut') {
@@ -304,7 +311,7 @@ export function HexScene3D({
         sceneApiRef.current?.spawnOpPopup(w.x, w.z, ev.badge, ev.severity);
       }
     }
-  }, [world.events.length]);
+  }, [world.events, world.tick]);
 
   useEffect(() => {
     if (world.tick === 0) {
@@ -441,6 +448,7 @@ export function HexScene3D({
     );
     let activeChannelMat: THREE.ShaderMaterial | null = null;
     let activeWaterMat: THREE.ShaderMaterial | null = null;
+    let animatedSceneryNodes: THREE.Object3D[] = [];
     let channelActiveBlend = 0.28;
 
     // Hover / Ghost / Highlight / Inspected / Polymer / Error rings
@@ -897,6 +905,7 @@ export function HexScene3D({
       clearGroup(gridGroup);
       clearGroup(cliffGroup);
       activeWaterMat = null;
+      animatedSceneryNodes = [];
       clearGroup(sceneryGroup);
       interactableHexes = [];
 
@@ -918,21 +927,27 @@ export function HexScene3D({
       const hitMat = new THREE.MeshBasicMaterial({ visible: false });
 
       let maxR = 2;
-      const playableCoords: AxialCoord[] = [];
+      const solidCoords: AxialCoord[] = [];
+      const gapCoords: AxialCoord[] = [];
       for (const k of worldSnap.platformHexes) {
         const c = parseHexKey(k);
-        playableCoords.push(c);
+        if (worldSnap.narrowGapHexes.has(k)) {
+          gapCoords.push(c);
+        } else {
+          solidCoords.push(c);
+        }
         maxR = Math.max(maxR, hexDistance(c, { q: 0, r: 0 }));
       }
 
       // Per-hex instanced recessed dark seam sub-plinths (clean grout lines without outer plate overhang)
-      const count = playableCoords.length;
+      const totalCount = solidCoords.length + gapCoords.length;
+      const count = solidCoords.length;
       const seamGeo = new THREE.CylinderGeometry(HEX_SIZE * 0.992, HEX_SIZE * 0.96, 0.34, 6);
       const seamMat = createCelMaterial(pal.ink, { roughness: 0.95, metalness: 0 });
-      const seamInst = new THREE.InstancedMesh(seamGeo, seamMat, count);
+      const seamInst = new THREE.InstancedMesh(seamGeo, seamMat, Math.max(1, count));
 
       // Instanced beveled playable hex tiles with subtle per-tile tonal variation
-      const tileInst = new THREE.InstancedMesh(tileGeo, [topMat, sideMat], count);
+      const tileInst = new THREE.InstancedMesh(tileGeo, [topMat, sideMat], Math.max(1, count));
       tileInst.receiveShadow = !isSoftwareGl;
       tileInst.castShadow = !isSoftwareGl;
       const baseTopColor = new THREE.Color(pal.hexTop);
@@ -947,12 +962,12 @@ export function HexScene3D({
         polygonOffsetFactor: -1,
         polygonOffsetUnits: -1,
       });
-      const gridRingInst = new THREE.InstancedMesh(gridRingGeo, gridRingMat, count);
+      const gridRingInst = new THREE.InstancedMesh(gridRingGeo, gridRingMat, Math.max(1, count));
 
       const fullDiskCount = 1 + 3 * maxR * (maxR + 1);
-      const hasChasm = count < fullDiskCount;
+      const hasChasm = totalCount < fullDiskCount || gapCoords.length > 0;
 
-      playableCoords.forEach((c, idx) => {
+      solidCoords.forEach((c, idx) => {
         const w = hexToWorld(c);
         _dummy.position.set(w.x, 0, w.z);
         _dummy.rotation.set(0, 0, 0);
@@ -982,11 +997,55 @@ export function HexScene3D({
         gridGroup.add(hit);
         interactableHexes.push(hit);
       });
-      if (tileInst.instanceColor) tileInst.instanceColor.needsUpdate = true;
-      tileInst.computeBoundingSphere();
-      gridRingInst.computeBoundingSphere();
-      seamInst.computeBoundingSphere();
-      gridGroup.add(seamInst, tileInst, gridRingInst);
+      if (count > 0) {
+        if (tileInst.instanceColor) tileInst.instanceColor.needsUpdate = true;
+        tileInst.computeBoundingSphere();
+        gridRingInst.computeBoundingSphere();
+        seamInst.computeBoundingSphere();
+        gridGroup.add(seamInst, tileInst, gridRingInst);
+      }
+
+      // Render narrow-gap fissure hexes: sunken abyssal pit rimmed with amber caution beacon ring
+      if (gapCoords.length > 0) {
+        const gapRingMat = createCelMaterial(0xf59e0b, {
+          emissive: 0xd97706,
+          emissiveIntensity: 0.45,
+          roughness: 0.45,
+        });
+        const gapAbyssMat = createCelMaterial(pal.cliffSide, { roughness: 0.95, metalness: 0.02 });
+        const gapWarnGeo = new THREE.RingGeometry(HEX_SIZE * 0.66, HEX_SIZE * 0.84, 6);
+        gapWarnGeo.rotateX(-Math.PI / 2);
+        gapWarnGeo.rotateY(Math.PI / 6);
+
+        for (const gc of gapCoords) {
+          const gw = hexToWorld(gc);
+          const pit = new THREE.Mesh(
+            new THREE.CylinderGeometry(HEX_SIZE * 0.84, HEX_SIZE * 0.68, 0.34, 6),
+            gapAbyssMat,
+          );
+          pit.position.set(gw.x, -0.42, gw.z);
+          addInkOutline(pit, pal.ink, 0.02);
+          gridGroup.add(pit);
+
+          const warnFrame = new THREE.Mesh(gapWarnGeo, gapRingMat);
+          warnFrame.position.set(gw.x, -0.02, gw.z);
+          gridGroup.add(warnFrame);
+
+          // Cross-bridge laser guide bars hinting polymers can span across
+          const bridgeHint = new THREE.Mesh(
+            new THREE.BoxGeometry(HEX_SIZE * 1.1, 0.024, 0.09),
+            gapRingMat,
+          );
+          bridgeHint.position.set(gw.x, -0.04, gw.z);
+          gridGroup.add(bridgeHint);
+
+          const hit = new THREE.Mesh(hitGeo, hitMat);
+          hit.position.set(gw.x, -0.1, gw.z);
+          hit.userData.coord = gc;
+          gridGroup.add(hit);
+          interactableHexes.push(hit);
+        }
+      }
 
       // Terraced outer rocky cliff hexes (clean Tunic matte stone without polka dots or wireframe lines)
       const cliffTopMat = createCelMaterial(0xffffff, { roughness: 0.84, metalness: 0.03 });
@@ -1105,6 +1164,12 @@ export function HexScene3D({
         cloud.userData.phase = cl * 1.4;
         sceneryGroup.add(cloud);
       }
+
+      sceneryGroup.traverse((obj) => {
+        if (obj.userData?.sceneryAnim) {
+          animatedSceneryNodes.push(obj);
+        }
+      });
     }
 
     function syncMachines() {
@@ -1174,16 +1239,29 @@ export function HexScene3D({
         emissive: colorHex,
         emissiveIntensity: 0.38,
       });
-      const shaftLen = HEX_SIZE * 0.85 * lenScale;
-      const shaft = new THREE.Mesh(new THREE.BoxGeometry(shaftLen, 0.04, 0.12), mat);
+      const shaftLen = HEX_SIZE * 0.82 * lenScale;
+      const shaft = new THREE.Mesh(new THREE.BoxGeometry(shaftLen, 0.045, 0.12), mat);
       shaft.position.set(HEX_SIZE * 0.48 + shaftLen * 0.5, 0, 0);
-      addInkOutline(shaft, inkColor, 0.02);
+      addInkOutline(shaft, inkColor, 0.016);
 
-      const head = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.28, 4), mat);
-      head.rotation.z = -Math.PI / 2;
-      head.rotation.x = Math.PI / 4;
-      head.position.set(HEX_SIZE * 0.48 + shaftLen + 0.1, 0, 0);
-      addInkOutline(head, inkColor, 0.02);
+      const headShape = new THREE.Shape();
+      headShape.moveTo(-0.08, -0.17);
+      headShape.lineTo(0.2, 0);
+      headShape.lineTo(-0.08, 0.17);
+      headShape.lineTo(-0.02, 0);
+      headShape.closePath();
+      const headGeo = new THREE.ExtrudeGeometry(headShape, {
+        depth: 0.055,
+        bevelEnabled: true,
+        bevelThickness: 0.012,
+        bevelSize: 0.012,
+        bevelSegments: 1,
+      });
+      headGeo.rotateX(-Math.PI / 2);
+      headGeo.translate(0, -0.027, 0);
+      const head = new THREE.Mesh(headGeo, mat);
+      head.position.set(HEX_SIZE * 0.48 + shaftLen + 0.04, 0, 0);
+      addInkOutline(head, inkColor, 0.016);
 
       arrowGrp.add(shaft, head);
       tacticalGroup.add(arrowGrp);
@@ -1228,12 +1306,31 @@ export function HexScene3D({
       ) {
         addTacticalArrow(coord, dir, 0x26b557, inkColor, 0.9);
         addTacticalHexRing(hexNeighbor(coord, dir), 0x86efac, 0.055);
-      } else if (mType === 'filter' || mType === 'divmod' || mType === 'dup' || mType === 'splitter') {
+      } else if (
+        mType === 'filter' ||
+        mType === 'divmod' ||
+        mType === 'dup' ||
+        mType === 'splitter' ||
+        mType === 'halver' ||
+        mType === 'scales'
+      ) {
         addTacticalArrow(coord, dir, 0x26b557, inkColor, 0.9);
         addTacticalHexRing(hexNeighbor(coord, dir), 0x86efac, 0.055);
-        const secColor = mType === 'dup' || mType === 'splitter' ? 0x38bdf8 : 0xf59e0b;
+        const secColor =
+          mType === 'dup' || mType === 'splitter' || mType === 'halver' ? 0x38bdf8 : 0xf59e0b;
         addTacticalArrow(coord, altDir, secColor, inkColor, 0.82, 0.09);
         addTacticalHexRing(hexNeighbor(coord, altDir), secColor, 0.058);
+      } else if (mType === 'jumper') {
+        const d1 = hexNeighbor(coord, dir);
+        const d2 = hexNeighbor(d1, dir);
+        addTacticalArrow(coord, dir, 0xfde047, inkColor, 1.55, 0.22);
+        addTacticalHexRing(d1, 0x94a3b8, 0.045);
+        addTacticalHexRing(d2, 0x38bdf8, 0.07);
+      } else if (mType === 'swapper') {
+        const dFront = hexNeighbor(coord, dir);
+        const dBack = hexNeighbor(coord, ((dir + 3) % 6) as HexDir);
+        addTacticalHexRing(dFront, 0xfde047, 0.065);
+        addTacticalHexRing(dBack, 0x38bdf8, 0.065);
       } else if (mType === 'destroyer') {
         addTacticalHexRing(coord, 0xef4444, 0.065);
       } else if (mType === 'pusher') {
@@ -1696,7 +1793,8 @@ export function HexScene3D({
           const sin = Math.sin(rotAngle);
           wx = pW.x + (dx * cos - dz * sin);
           wz = pW.z + (dx * sin + dz * cos);
-          hop = Math.sin(alpha * Math.PI) * 0.16;
+          const isSwap180 = Math.abs(tok.rotatedFrom.angleDelta) > 2;
+          hop = Math.sin(alpha * Math.PI) * (isSwap180 ? 0.34 : 0.16);
           pitchZ = Math.sin(alpha * Math.PI) * 0.08 * Math.sign(tok.rotatedFrom.angleDelta);
         } else {
           const sW = hexToWorld(tok.prevCoord);
@@ -1721,6 +1819,13 @@ export function HexScene3D({
                   : -Math.sin(Math.min(1, (alpha - 0.38) / 0.35) * Math.PI) * 0.08;
               stretchXZ = 1 + sq * 0.65;
               stretchY = 1 - sq;
+            } else if (src === 'jump') {
+              tCurve = 1 - Math.pow(1 - alpha, 2.05);
+              hop = Math.sin(alpha * Math.PI) * 0.72;
+              const landSquash =
+                alpha > 0.85 ? Math.sin(((alpha - 0.85) / 0.15) * Math.PI) * 0.12 : 0;
+              stretchXZ = 1 + landSquash * 0.6;
+              stretchY = 1 - landSquash;
             } else if (src === 'magnet') {
               tCurve =
                 alpha < 0.45
@@ -2031,6 +2136,15 @@ export function HexScene3D({
             child.rotation.z = isFlashing
               ? 0.28 * flashArc
               : Math.sin(elapsed * 3 + pIdx * 2.09) * 0.09;
+          } else if (anim === 'halverWedge') {
+            child.position.y = 0.56 - stroke * 0.22 + Math.sin(elapsed * 2.6) * 0.015;
+          } else if (anim === 'swapperTurntable') {
+            child.rotation.y = isFlashing && alpha < 1 ? Math.PI * (1 - ease) : Math.sin(elapsed * 1.8) * 0.04;
+          } else if (anim === 'jumperSpring') {
+            child.scale.y = 1 + stroke * 0.48;
+            child.position.y = 0.16 + stroke * 0.14;
+          } else if (anim === 'scalesBeam') {
+            child.rotation.x = Math.sin(elapsed * 2.4) * 0.08 + stroke * 0.28;
           }
 
           if (
@@ -2156,8 +2270,8 @@ export function HexScene3D({
         controls.update();
       }
 
-      // Gently animate distant floating mini-islands & drifting sky clouds
-      for (const child of sceneryGroup.children) {
+      // Animate distant mini-islands, sky clouds, rooftop turbines, stabilizer core & radar dishes
+      for (const child of animatedSceneryNodes) {
         const sAnim = child.userData.sceneryAnim;
         if (sAnim === 'miniIsland') {
           const baseY = (child.userData.baseY as number) ?? 0;
@@ -2168,6 +2282,12 @@ export function HexScene3D({
           const speed = (child.userData.speed as number) ?? 0.3;
           const ph = (child.userData.phase as number) ?? 0;
           child.position.x = baseX + Math.sin(elapsed * speed * 0.45 + ph) * 3.2;
+        } else if (sAnim === 'spinY') {
+          const spinSpeed = (child.userData.spinSpeed as number) ?? 1.5;
+          child.rotation.y += dt * spinSpeed;
+        } else if (sAnim === 'radarSweep') {
+          const ph = (child.userData.phase as number) ?? 0;
+          child.rotation.y = Math.sin(elapsed * 0.7 + ph) * 0.85;
         }
       }
 
@@ -2196,7 +2316,10 @@ export function HexScene3D({
           const dw = hexToWorld(dropCoord);
           const dKey = hexKey(dropCoord);
           const destMachine = wSnap.machines.get(dKey);
-          const isValid = wSnap.platformHexes.has(dKey) && !destMachine?.locked;
+          const isValid =
+            wSnap.platformHexes.has(dKey) &&
+            !wSnap.narrowGapHexes.has(dKey) &&
+            !destMachine?.locked;
 
           hoverRingMat.color.setHex(isValid ? 0x26b557 : 0xff3b30);
           hoverRing.position.set(dw.x, 0.03, dw.z);
@@ -2244,8 +2367,14 @@ export function HexScene3D({
           ghostGroup.visible = false;
         }
       } else if (!titleMode && hoveredCoord && wSnap.platformHexes.has(hexKey(hoveredCoord))) {
+        const hKey = hexKey(hoveredCoord);
+        const isNarrowGap = wSnap.narrowGapHexes.has(hKey);
         const hw = hexToWorld(hoveredCoord);
-        hoverRingMat.color.setHex(0xffffff);
+        const canPlaceTool =
+          Boolean(tool && tool !== 'erase' && tool !== 'select') && !isNarrowGap;
+        hoverRingMat.color.setHex(
+          isNarrowGap && tool && tool !== 'erase' && tool !== 'select' ? 0xff3b30 : 0xffffff,
+        );
         hoverRing.position.set(hw.x, 0.025, hw.z);
         hoverRing.visible = true;
 
@@ -2263,7 +2392,7 @@ export function HexScene3D({
           }
         }
 
-        const existing = wSnap.machines.get(hexKey(hoveredCoord));
+        const existing = wSnap.machines.get(hKey);
         if (existing) {
           activeTacticalSpec = {
             coord: hoveredCoord,
@@ -2274,7 +2403,7 @@ export function HexScene3D({
           };
         }
 
-        if (tool && tool !== 'erase' && tool !== 'select' && !existing?.locked) {
+        if (canPlaceTool && tool && tool !== 'erase' && tool !== 'select' && !existing?.locked) {
           const modeVal = rotMode ?? 'cw';
           const nextGhostKey = `${tool}:${dir}:${modeVal}:${tId}`;
           if (ghostKey !== nextGhostKey) {
