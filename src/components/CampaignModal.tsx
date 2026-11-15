@@ -62,14 +62,14 @@ export function CampaignModal({
   const grade5Done = GRADE5_LEVELS.filter((l) => progress[l.id]?.completed).length;
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
-      <div className="cel-panel rounded-2xl max-w-3xl w-full max-h-[88vh] flex flex-col p-5 sm:p-6">
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/55 p-4">
+      <div className="hud-panel rounded-2xl max-w-3xl w-full max-h-[88vh] flex flex-col p-5 sm:p-6">
         <div className="flex items-start justify-between gap-3 mb-3">
           <div>
-            <h2 className="font-display text-2xl font-extrabold text-[#141e1a]">
+            <h2 className="font-display text-2xl font-extrabold text-[#141e1a] dark:text-slate-100">
               Кампания и Песочница
             </h2>
-            <p className="text-xs text-slate-600">
+            <p className="text-xs text-slate-600 dark:text-slate-400">
               {ALL_PUZZLE_LEVELS.length} инженерно-математических головоломок · Все уровни открыты для решения и оптимизации
             </p>
           </div>
@@ -77,7 +77,7 @@ export function CampaignModal({
             type="button"
             onClick={onClose}
             aria-label="Закрыть выбор уровней"
-            className="cel-btn p-2 rounded-xl bg-white cursor-pointer"
+            className="hud-btn p-2 rounded-xl bg-white dark:bg-slate-800 text-[#141e1a] dark:text-slate-200 cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -87,17 +87,17 @@ export function CampaignModal({
         <div
           role="tablist"
           aria-label="Главы головоломок"
-          className="flex flex-wrap items-center gap-2 mb-4 pb-3 border-b border-black/15"
+          className="flex flex-wrap items-center gap-2 mb-4 pb-3 border-b border-black/15 dark:border-slate-700/70"
         >
           <button
             type="button"
             role="tab"
             aria-selected={chapter === 'campaign'}
             onClick={() => setChapter('campaign')}
-            className={`cel-btn px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-2 ${
+            className={`hud-btn px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-2 whitespace-nowrap ${
               chapter === 'campaign'
-                ? 'bg-[#141e1a] text-white'
-                : 'bg-white text-[#141e1a] hover:bg-[#f2f7f4]'
+                ? 'bg-[#141e1a] dark:bg-slate-100 text-white dark:text-slate-950'
+                : 'bg-white dark:bg-slate-800/80 text-[#141e1a] dark:text-slate-200 hover:bg-[#f2f7f4] dark:hover:bg-slate-700/80'
             }`}
           >
             <span>Глава I · Кампания ({CAMPAIGN_LEVELS.length})</span>
@@ -111,10 +111,10 @@ export function CampaignModal({
             role="tab"
             aria-selected={chapter === 'eureka'}
             onClick={() => setChapter('eureka')}
-            className={`cel-btn px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-2 ${
+            className={`hud-btn px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-2 whitespace-nowrap ${
               chapter === 'eureka'
-                ? 'bg-[#26b557] text-white'
-                : 'bg-white text-[#141e1a] hover:bg-[#f2f7f4]'
+                ? 'bg-[#26b557] dark:bg-emerald-500 text-white dark:text-slate-950'
+                : 'bg-white dark:bg-slate-800/80 text-[#141e1a] dark:text-slate-200 hover:bg-[#f2f7f4] dark:hover:bg-slate-700/80'
             }`}
           >
             <span>Глава II · Эврика ({EUREKA_LEVELS.length})</span>
@@ -128,10 +128,10 @@ export function CampaignModal({
             role="tab"
             aria-selected={chapter === 'impossible'}
             onClick={() => setChapter('impossible')}
-            className={`cel-btn px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-2 ${
+            className={`hud-btn px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-2 whitespace-nowrap ${
               chapter === 'impossible'
-                ? 'bg-[#7c3aed] text-white'
-                : 'bg-white text-[#141e1a] hover:bg-[#f2f7f4]'
+                ? 'bg-[#7c3aed] dark:bg-violet-500 text-white'
+                : 'bg-white dark:bg-slate-800/80 text-[#141e1a] dark:text-slate-200 hover:bg-[#f2f7f4] dark:hover:bg-slate-700/80'
             }`}
           >
             <span>Глава III · Невозможные ({IMPOSSIBLE_LEVELS.length})</span>
@@ -145,10 +145,10 @@ export function CampaignModal({
             role="tab"
             aria-selected={chapter === 'grade5'}
             onClick={() => setChapter('grade5')}
-            className={`cel-btn px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-2 ${
+            className={`hud-btn px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-2 whitespace-nowrap ${
               chapter === 'grade5'
-                ? 'bg-[#0284c7] text-white'
-                : 'bg-white text-[#141e1a] hover:bg-[#f2f7f4]'
+                ? 'bg-[#0284c7] dark:bg-cyan-400 text-white dark:text-slate-950'
+                : 'bg-white dark:bg-slate-800/80 text-[#141e1a] dark:text-slate-200 hover:bg-[#f2f7f4] dark:hover:bg-slate-700/80'
             }`}
           >
             <span>Глава IV · 5 класс ({GRADE5_LEVELS.length})</span>
@@ -186,43 +186,45 @@ export function CampaignModal({
                 key={lvl.id}
                 type="button"
                 onClick={() => onSelectLevel(lvl.id)}
-                className={`cel-btn text-left rounded-xl p-3.5 cursor-pointer flex flex-col justify-between gap-2 ${
-                  isCurrent ? 'bg-[#e5f6ec]' : 'bg-white hover:bg-[#f6faf7]'
+                className={`hud-btn text-left rounded-xl p-3.5 cursor-pointer flex flex-col justify-between gap-2 ${
+                  isCurrent
+                    ? 'bg-[#e5f6ec] dark:bg-emerald-950/55 dark:border-emerald-400/60'
+                    : 'bg-white dark:bg-slate-900/75 hover:bg-[#f6faf7] dark:hover:bg-slate-800/90'
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <div className="text-[11px] font-semibold text-slate-500 font-mono-tabular">
+                    <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 font-mono-tabular">
                       {prefix} · {lvl.tier}
                       {lvl.maxTotalBlocks !== undefined ? ` · Лимит ${lvl.maxTotalBlocks} бл.` : ''}
                       {lvl.fixedDivisor !== undefined ? ` · ÷${lvl.fixedDivisor} фикс.` : ''}
                       {hasHiddenTests ? ' · Скрытые тесты' : ''}
                     </div>
-                    <div className="font-display font-bold text-base text-[#141e1a]">
+                    <div className="font-display font-bold text-base text-[#141e1a] dark:text-slate-100">
                       {lvl.title}
                     </div>
                   </div>
                   {rec?.completed && (
                     <CheckCircle2
-                      className="w-5 h-5 text-[#26b557] shrink-0"
+                      className="w-5 h-5 text-[#26b557] dark:text-emerald-400 shrink-0"
                       aria-label="Уровень пройден"
                     />
                   )}
                 </div>
 
-                <p className="text-xs text-slate-600 line-clamp-2">{lvl.subtitle}</p>
+                <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-2">{lvl.subtitle}</p>
 
-                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px] font-mono-tabular text-slate-600 pt-1.5 border-t border-black/10">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px] font-mono-tabular text-slate-600 dark:text-slate-400 pt-1.5 border-t border-black/10 dark:border-slate-700/60">
                   <span className="truncate">{lvl.bonusGoalText}</span>
                   {rec?.bestTicks !== undefined && (
-                    <span className="font-bold text-[#141e1a] shrink-0 flex items-center gap-1.5">
+                    <span className="font-bold text-[#141e1a] dark:text-slate-200 shrink-0 flex items-center gap-1.5">
                       <span>
                         {rec.bestTicks}т · {rec.bestBlocks}б
                         {rec.bestArea !== undefined ? ` · ${rec.bestArea}п` : ''}
                       </span>
                       {medals && (
                         <span
-                          className="inline-flex items-center gap-0.5 text-[#b45309]"
+                          className="inline-flex items-center gap-0.5 text-[#b45309] dark:text-amber-400"
                           title={`Медали: ${medalCount}/3`}
                         >
                           <Award className="w-3.5 h-3.5" />
@@ -230,7 +232,7 @@ export function CampaignModal({
                         </span>
                       )}
                       {solveNote && (
-                        <span className="text-slate-500 font-medium">· {solveNote}</span>
+                        <span className="text-slate-500 dark:text-slate-400 font-medium">· {solveNote}</span>
                       )}
                     </span>
                   )}
@@ -240,14 +242,14 @@ export function CampaignModal({
           })}
         </div>
 
-        <div className="mt-4 pt-3 border-t border-black/15 flex flex-wrap items-center justify-between gap-3">
-          <span className="text-xs text-slate-600">
+        <div className="mt-4 pt-3 border-t border-black/15 dark:border-slate-700/70 flex flex-wrap items-center justify-between gap-3">
+          <span className="text-xs text-slate-600 dark:text-slate-300">
             Хотите поэкспериментировать со всеми {ALL_TOOLS.length} модулями (включая ½, ⚖, ↷ и ⇄) без ограничений?
           </span>
           <button
             type="button"
             onClick={onSelectSandbox}
-            className="cel-btn px-4 py-2 rounded-xl bg-[#141e1a] text-white text-xs font-bold cursor-pointer whitespace-nowrap"
+            className="hud-btn px-4 py-2 rounded-xl bg-[#141e1a] dark:bg-amber-400 text-white dark:text-slate-950 text-xs font-bold cursor-pointer whitespace-nowrap"
           >
             Открыть Песочницу
           </button>

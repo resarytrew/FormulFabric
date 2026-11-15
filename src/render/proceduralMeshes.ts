@@ -21,6 +21,14 @@ import {
   type PaletteThemeId,
   type ThemePalette,
 } from './celMaterials';
+import {
+  BELT_HALF_WIDTH,
+  computeConveyorGeometryData,
+  computeConveyorTopology,
+  evalCubic,
+  evalCubicTangent,
+  type Vec2,
+} from './conveyorTopology';
 
 function createHexShape(radius: number): THREE.Shape {
   const shape = new THREE.Shape();
@@ -254,50 +262,28 @@ function getBoltGeo(): THREE.CylinderGeometry {
   return sharedBoltGeo;
 }
 
-let sharedConveyorBeltGeo: THREE.ExtrudeGeometry | null = null;
-function getConveyorBeltGeo(): THREE.ExtrudeGeometry {
-  if (sharedConveyorBeltGeo) return sharedConveyorBeltGeo;
-  const r = 0.046;
-  const halfLen = 0.57;
-  const shape = new THREE.Shape();
-  shape.moveTo(-halfLen, -r);
-  shape.lineTo(halfLen, -r);
-  shape.absarc(halfLen, 0, r, -Math.PI / 2, Math.PI / 2, false);
-  shape.lineTo(-halfLen, r);
-  shape.absarc(-halfLen, 0, r, Math.PI / 2, (Math.PI * 3) / 2, false);
+function createXZExtrudeGeo(
+  pts: Vec2[],
+  baseY: number,
+  height: number,
+  bevel = 0,
+): THREE.ExtrudeGeometry {
+  const shapePts = pts.map((p) => new THREE.Vector2(p.x, -p.z));
+  if (THREE.ShapeUtils.isClockWise(shapePts)) {
+    shapePts.reverse();
+  }
+  const shape = new THREE.Shape(shapePts);
+  const depth = Math.max(0.005, height - bevel * 2);
   const geo = new THREE.ExtrudeGeometry(shape, {
-    depth: 0.78,
-    bevelEnabled: true,
-    bevelThickness: 0.01,
-    bevelSize: 0.01,
+    depth,
+    bevelEnabled: bevel > 0,
+    bevelThickness: bevel,
+    bevelSize: bevel,
     bevelSegments: 1,
-    curveSegments: 10,
+    curveSegments: 8,
   });
-  geo.translate(0, 0.108, -0.39);
-  geo.userData.isShared = true;
-  sharedConveyorBeltGeo = geo;
-  return geo;
-}
-
-let sharedConveyorRailGeo: THREE.ExtrudeGeometry | null = null;
-function getConveyorRailGeo(): THREE.ExtrudeGeometry {
-  if (sharedConveyorRailGeo) return sharedConveyorRailGeo;
-  const s = new THREE.Shape();
-  s.moveTo(-0.74, 0.06);
-  s.lineTo(0.74, 0.06);
-  s.lineTo(0.68, 0.21);
-  s.lineTo(-0.68, 0.21);
-  s.closePath();
-  const geo = new THREE.ExtrudeGeometry(s, {
-    depth: 0.095,
-    bevelEnabled: true,
-    bevelThickness: 0.014,
-    bevelSize: 0.014,
-    bevelSegments: 1,
-  });
-  geo.translate(0, 0, -0.0475);
-  geo.userData.isShared = true;
-  sharedConveyorRailGeo = geo;
+  geo.rotateX(-Math.PI / 2);
+  geo.translate(0, baseY + bevel, 0);
   return geo;
 }
 
@@ -465,6 +451,7 @@ export function buildMachineMesh(
   machine: MachineInstance,
   palette: ThemePalette,
   maxAniso: number,
+  machinesMap?: Map<HexKey, MachineInstance>,
 ): THREE.Group {
   const root = new THREE.Group();
   const inkStr = `#${new THREE.Color(palette.ink).getHexString()}`;
@@ -645,7 +632,10 @@ export function buildMachineMesh(
       1.16,
     );
   } else if (type === 'conveyor') {
-    // Industrial Tensioned-Belt Conveyor: stadium rubber loop, extruded C-channel rails, pillow bearings, drive motor + meshing gears, 6 wrap-around cleats & side direction arrows
+    // Topology-aware conveyor track: seamlessly blends straight, 60-deg turns, 120-deg U-turns & multi-input merges
+    const topo = computeConveyorTopology(machine, machinesMap);
+    const geoData = computeConveyorGeometryData(topo, 18);
+
     const bed = new THREE.Mesh(
       new THREE.CylinderGeometry(HEX_SIZE * 0.84, HEX_SIZE * 0.88, 0.075, 6),
       createCelMaterial(palette.machineBase),
@@ -655,131 +645,183 @@ export function buildMachineMesh(
     addInkOutline(bed, palette.ink, 0.024);
     root.add(bed);
 
-    addCornerBolts(
-      root,
-      [
-        [-0.6, 0.085, -0.35],
-        [-0.6, 0.085, 0.35],
-        [0.6, 0.085, -0.35],
-        [0.6, 0.085, 0.35],
-      ],
-      palette.sinkGlow,
-      palette.ink,
-    );
+    const beltMat = createCelMaterial(palette.ink, { roughness: 0.72, metalness: 0.08 });
+    const railBodyMat = createCelMaterial(palette.machineTop, { roughness: 0.48, metalness: 0.16 });
+    const railLipMat = createCelMaterial(palette.machineBase, { roughness: 0.44, metalness: 0.2 });
 
-    // Continuous stadium tensioned belt loop wrapping around both drums
-    const beltLoop = new THREE.Mesh(getConveyorBeltGeo(), createCelMaterial(palette.ink));
-    beltLoop.receiveShadow = true;
-    addInkOutline(beltLoop, palette.ink, 0.01);
-    root.add(beltLoop);
+    if (topo.kind === 'merge') {
+      // Octagonal central transfer hub + flush belt arms along every connected hex edge
+      const hubBelt = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.42, 0.44, 0.088, 14),
+        beltMat,
+      );
+      hubBelt.position.y = 0.108;
+      hubBelt.receiveShadow = true;
+      addInkOutline(hubBelt, palette.ink, 0.011);
+      root.add(hubBelt);
 
-    // Beveled extruded C-channel side frames + top trim + axle pillow bearings
-    const railGeo = getConveyorRailGeo();
-    const endDrumGeo = new THREE.CylinderGeometry(0.095, 0.095, 0.14, 10);
-    endDrumGeo.rotateX(Math.PI / 2);
-    const sideChevronGeo = getChevronGeo();
+      for (const arm of geoData.mergeArms) {
+        const armLen = Math.max(0.24, arm.dist - 0.1);
+        const armMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(armLen, 0.086, BELT_HALF_WIDTH * 2),
+          beltMat,
+        );
+        const ang = arm.relStep * (Math.PI / 3);
+        const midR = (arm.dist + 0.1) * 0.5;
+        armMesh.position.set(Math.cos(ang) * midR, 0.108, Math.sin(ang) * midR);
+        armMesh.rotation.y = -ang;
+        armMesh.receiveShadow = true;
+        addInkOutline(armMesh, palette.ink, 0.01);
+        root.add(armMesh);
+      }
 
-    for (const zSide of [-0.47, 0.47]) {
-      const rail = new THREE.Mesh(railGeo, createCelMaterial(palette.machineTop));
-      rail.position.z = zSide;
-      rail.castShadow = true;
-      addInkOutline(rail, palette.ink, 0.017);
-      root.add(rail);
-
-      const lip = new THREE.Mesh(
-        new THREE.BoxGeometry(HEX_SIZE * 1.28, 0.038, 0.125),
+      const hubRing = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.26, 0.26, 0.014, 14),
         createCelMaterial(palette.machineBase),
       );
-      lip.position.set(0, 0.225, zSide);
-      addInkOutline(lip, palette.ink, 0.011);
-      root.add(lip);
+      hubRing.position.y = 0.153;
+      root.add(hubRing);
+    } else {
+      // Continuous extruded straight or curved belt deck flush with connected hex boundaries
+      const beltPoly = [...geoData.beltOuter, ...geoData.beltInner.slice().reverse()];
+      const beltMesh = new THREE.Mesh(createXZExtrudeGeo(beltPoly, 0.064, 0.086, 0), beltMat);
+      beltMesh.receiveShadow = true;
+      addInkOutline(beltMesh, palette.ink, 0.011);
+      root.add(beltMesh);
+    }
 
-      // Embossed direction indicator chevrons on top lip of side rails
-      const sideSign = Math.sign(zSide);
-      const guideChev = new THREE.Mesh(sideChevronGeo, createCelMaterial(palette.sinkGlow));
-      guideChev.scale.set(0.45, 0.55, 0.24);
-      guideChev.position.set(0.24, 0.246, zSide + sideSign * 0.005);
-      root.add(guideChev);
+    // Raised C-channel guide rails + top dark trim cap along outer & unconnected edges only
+    for (const railPoly of geoData.railPolygons) {
+      const railMesh = new THREE.Mesh(
+        createXZExtrudeGeo(railPoly, 0.064, 0.146, 0.005),
+        railBodyMat,
+      );
+      railMesh.castShadow = true;
+      railMesh.receiveShadow = true;
+      addInkOutline(railMesh, palette.ink, 0.015);
+      root.add(railMesh);
 
-      for (const xEnd of [-0.59, 0.59]) {
-        const cap = new THREE.Mesh(endDrumGeo, createCelMaterial(palette.accent));
-        cap.position.set(xEnd, 0.115, zSide);
+      const lipMesh = new THREE.Mesh(
+        createXZExtrudeGeo(railPoly, 0.21, 0.026, 0.003),
+        railLipMat,
+      );
+      addInkOutline(lipMesh, palette.ink, 0.009);
+      root.add(lipMesh);
+    }
+
+    // Open-end drive drums & bearings only where no machine connects
+    const drumGeo = new THREE.CylinderGeometry(0.044, 0.044, BELT_HALF_WIDTH * 2, 12);
+    drumGeo.rotateX(Math.PI / 2);
+    const drumCapGeo = new THREE.CylinderGeometry(0.072, 0.072, 0.065, 10);
+    drumCapGeo.rotateX(Math.PI / 2);
+
+    for (const drum of geoData.openDrums) {
+      const drumGroup = new THREE.Group();
+      drumGroup.position.set(drum.x, 0.107, drum.z);
+      drumGroup.rotation.y = drum.yaw;
+
+      const cyl = new THREE.Mesh(drumGeo, beltMat);
+      cyl.userData.animType = 'conveyorRoller';
+      addInkOutline(cyl, palette.ink, 0.009);
+      drumGroup.add(cyl);
+
+      for (const zCap of [-(BELT_HALF_WIDTH + 0.06), BELT_HALF_WIDTH + 0.06]) {
+        const cap = new THREE.Mesh(drumCapGeo, createCelMaterial(palette.accent));
+        cap.position.z = zCap;
         cap.userData.animType = 'conveyorRoller';
-        addInkOutline(cap, palette.ink, 0.013);
-        root.add(cap);
+        addInkOutline(cap, palette.ink, 0.011);
+        drumGroup.add(cap);
       }
+      root.add(drumGroup);
     }
 
-    // Finned side-mounted electric drive motor + junction box + dual meshing gears on +Z rail
-    const motor = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.115, 0.115, 0.3, 10),
-      createCelMaterial(palette.accentSecondary),
-    );
-    motor.rotation.z = Math.PI / 2;
-    motor.position.set(-0.34, 0.145, 0.625);
-    addInkOutline(motor, palette.ink, 0.015);
-    root.add(motor);
-
-    for (let f = 0; f < 3; f++) {
-      const fin = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.132, 0.132, 0.025, 10),
-        createCelMaterial(palette.machineBase),
+    // Vertical guide roller on tight 120-deg U-turn inner corner
+    if (geoData.innerRollerPos) {
+      const cornerRoller = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.078, 0.078, 0.175, 12),
+        createCelMaterial(palette.accent),
       );
-      fin.rotation.z = Math.PI / 2;
-      fin.position.set(-0.43 + f * 0.085, 0.145, 0.625);
-      root.add(fin);
+      cornerRoller.position.set(geoData.innerRollerPos.x, 0.155, geoData.innerRollerPos.z);
+      cornerRoller.userData.animType = 'conveyorGear';
+      cornerRoller.userData.gearSign = topo.primaryInRelStep === 1 ? -1 : 1;
+      addInkOutline(cornerRoller, palette.ink, 0.012);
+      root.add(cornerRoller);
     }
 
-    const driveBeltBar = new THREE.Mesh(
-      new THREE.BoxGeometry(0.44, 0.075, 0.045),
-      createCelMaterial(palette.machineBase),
-    );
-    driveBeltBar.position.set(-0.08, 0.145, 0.585);
-    addInkOutline(driveBeltBar, palette.ink, 0.01);
-    root.add(driveBeltBar);
+    // Side-mounted electric drive motor + gears placed strictly on clear outer side
+    if (topo.kind !== 'merge') {
+      const mSign = topo.motorSideSign;
+      const motorX = topo.kind === 'straight' ? -0.26 : -0.22;
+      const motorZ = mSign * (topo.kind === 'straight' ? 0.59 : 0.54);
 
-    const driveGearGeo = getSmallCogGeo();
-    for (let gi = 0; gi < 2; gi++) {
-      const gx = gi === 0 ? -0.17 : 0.09;
-      const driveGear = new THREE.Mesh(driveGearGeo, createCelMaterial(palette.sinkGlow));
-      driveGear.position.set(gx, 0.145, 0.56);
-      driveGear.userData.animType = 'conveyorGear';
-      driveGear.userData.gearSign = gi === 0 ? -1 : 1;
-      addInkOutline(driveGear, palette.ink, 0.01);
-      root.add(driveGear);
-    }
+      const motor = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.102, 0.102, 0.26, 10),
+        createCelMaterial(palette.accentSecondary),
+      );
+      motor.rotation.z = Math.PI / 2;
+      motor.position.set(motorX, 0.135, motorZ);
+      addInkOutline(motor, palette.ink, 0.013);
+      root.add(motor);
 
-    // 5 spinning hexagonal drive rollers with bright end bearings
-    const rollerGeo = new THREE.CylinderGeometry(0.056, 0.056, 0.84, 6);
-    rollerGeo.rotateX(Math.PI / 2);
-    const bearingGeo = new THREE.CylinderGeometry(0.072, 0.072, 0.055, 6);
-    bearingGeo.rotateX(Math.PI / 2);
-    for (let i = 0; i < 5; i++) {
-      const rx = -0.54 + i * 0.27;
-      const roller = new THREE.Mesh(rollerGeo, createCelMaterial(palette.machineBase));
-      roller.position.set(rx, 0.108, 0);
-      roller.userData.animType = 'conveyorRoller';
-      root.add(roller);
+      for (let f = 0; f < 3; f++) {
+        const fin = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.118, 0.118, 0.022, 10),
+          railLipMat,
+        );
+        fin.rotation.z = Math.PI / 2;
+        fin.position.set(motorX - 0.08 + f * 0.08, 0.135, motorZ);
+        root.add(fin);
+      }
 
-      for (const zB of [-0.38, 0.38]) {
-        const bearing = new THREE.Mesh(bearingGeo, createCelMaterial(palette.sinkGlow));
-        bearing.position.set(rx, 0.108, zB);
-        bearing.userData.animType = 'conveyorRoller';
-        root.add(bearing);
+      const driveGearGeo = getSmallCogGeo();
+      const gearZ = motorZ - mSign * 0.065;
+      for (let gi = 0; gi < 2; gi++) {
+        const gx = motorX + 0.18 + gi * 0.22;
+        const driveGear = new THREE.Mesh(driveGearGeo, createCelMaterial(palette.sinkGlow));
+        driveGear.position.set(gx, 0.135, gearZ);
+        driveGear.userData.animType = 'conveyorGear';
+        driveGear.userData.gearSign = gi === 0 ? -1 : 1;
+        addInkOutline(driveGear, palette.ink, 0.009);
+        root.add(driveGear);
       }
     }
 
-    // 6 animated looping 3D chevron cleats wrapping cleanly around front/rear drums
-    for (let i = 0; i < 6; i++) {
+    // Animated looping 3D chevron cleats following exact Cubic Bezier path
+    const treadCount = topo.kind === 'merge' ? 3 : 6;
+    const chevGeo = getChevronGeo();
+    const chevScale = topo.kind === 'turn120' ? 0.86 : 1.0;
+    const trimEnd = (pt: Vec2, toward: Vec2, amt: number): Vec2 => {
+      const dx = toward.x - pt.x;
+      const dz = toward.z - pt.z;
+      const len = Math.hypot(dx, dz) || 1;
+      return { x: pt.x + (dx / len) * amt, z: pt.z + (dz / len) * amt };
+    };
+    const chevP0 = !topo.hasInput ? trimEnd(geoData.curveP0, geoData.curveC1, 0.09) : geoData.curveP0;
+    const chevP2 = !topo.hasOutput ? trimEnd(geoData.curveP2, geoData.curveC2, 0.09) : geoData.curveP2;
+
+    for (let i = 0; i < treadCount; i++) {
       const chev = new THREE.Mesh(
-        getChevronGeo(),
+        chevGeo,
         createCelMaterial(i % 2 === 0 ? palette.sinkGlow : palette.accent),
       );
-      chev.position.set(-0.55 + i * 0.22, 0.15, 0);
+      chev.rotation.order = 'YXZ';
+      const initT = (i + 0.5) / treadCount;
+      const pt = evalCubic(chevP0, geoData.curveC1, geoData.curveC2, chevP2, initT);
+      const tan = evalCubicTangent(chevP0, geoData.curveC1, geoData.curveC2, chevP2, initT);
+      chev.position.set(pt.x, 0.152, pt.z);
+      chev.rotation.y = Math.atan2(-tan.z, tan.x);
+      chev.scale.set(chevScale, 1, chevScale);
       chev.userData.animType = 'conveyorTread';
       chev.userData.treadIdx = i;
-      chev.userData.treadCount = 6;
-      addInkOutline(chev, palette.ink, 0.013);
+      chev.userData.treadCount = treadCount;
+      chev.userData.chevScale = chevScale;
+      chev.userData.curveP0 = chevP0;
+      chev.userData.curveC1 = geoData.curveC1;
+      chev.userData.curveC2 = geoData.curveC2;
+      chev.userData.curveP2 = chevP2;
+      chev.userData.isOpenIn = !topo.hasInput;
+      chev.userData.isOpenOut = !topo.hasOutput;
+      addInkOutline(chev, palette.ink, 0.012);
       root.add(chev);
     }
   } else if (type === 'pusher') {
@@ -2312,10 +2354,12 @@ export function buildTokenMesh(
   group.add(shadowDisc);
 
   // Chamfered satin ceramic lathe puck body with waist groove
-  const body = new THREE.Mesh(
-    getTokenBodyGeo(),
-    createCelMaterial(discColor, { roughness: 0.36, metalness: 0.08, envMapIntensity: 0.75 }),
-  );
+  const bodyMat = createCelMaterial(discColor, {
+    roughness: 0.36,
+    metalness: 0.08,
+    envMapIntensity: 0.75,
+  });
+  const body = new THREE.Mesh(getTokenBodyGeo(), bodyMat);
   body.castShadow = true;
   body.receiveShadow = true;
   addInkOutline(body, palette.ink, 0.016);
@@ -2331,10 +2375,8 @@ export function buildTokenMesh(
   group.add(waistRing);
 
   // Crisp upper ceramic collar rim
-  const rim = new THREE.Mesh(
-    getTokenRimGeo(),
-    createCelMaterial(0xffffff, { roughness: 0.28, metalness: 0.05 }),
-  );
+  const rimMat = createCelMaterial(0xffffff, { roughness: 0.28, metalness: 0.05 });
+  const rim = new THREE.Mesh(getTokenRimGeo(), rimMat);
   rim.position.y = 0.36;
   group.add(rim);
 
@@ -2349,6 +2391,9 @@ export function buildTokenMesh(
   cap.position.y = 0.372;
   cap.rotation.y = Math.PI * 0.12;
   group.add(cap);
+
+  group.userData.bodyMat = bodyMat;
+  group.userData.rimMat = rimMat;
 
   return group;
 }
@@ -2384,6 +2429,7 @@ export function buildBondRodMesh(palette: ThemePalette): THREE.Group {
 }
 
 const TRACK_JOIN_TYPES: ReadonlySet<MachineType> = new Set([
+  'spawner',
   'conveyor',
   'add1',
   'sub1',
@@ -2404,8 +2450,9 @@ const TRACK_JOIN_TYPES: ReadonlySet<MachineType> = new Set([
 ]);
 
 /**
- * Generates seamless belt bridges & side-rail couplers between adjacent track machines
- * so consecutive conveyors fuse into continuous industrial tracks.
+ * Generates seamless belt bridges & side-rail couplers between adjacent track machines.
+ * Conveyor-to-conveyor edges already meet flush at HEX_APOTHEM with curved/straight rails,
+ * so couplers never project obstructing side rails into turning conveyors.
  */
 export function buildConveyorConnectorGroup(
   machines: Map<HexKey, MachineInstance>,
@@ -2414,8 +2461,7 @@ export function buildConveyorConnectorGroup(
   const group = new THREE.Group();
   const beltMat = createCelMaterial(palette.ink, { roughness: 0.72, metalness: 0.08 });
   const railMat = createCelMaterial(palette.machineTop, { roughness: 0.48, metalness: 0.18 });
-  const seamWidth = 0.78;
-  const seamLen = 0.48;
+  const beltWidth = BELT_HALF_WIDTH * 2;
 
   for (const m of machines.values()) {
     if (!TRACK_JOIN_TYPES.has(m.type) || m.type === 'sink' || m.type === 'destroyer' || m.type === 'jumper') {
@@ -2436,31 +2482,62 @@ export function buildConveyorConnectorGroup(
     const wA = hexToWorld(m.coord);
     for (const d of outDirs) {
       const nb = machines.get(hexKey(hexNeighbor(m.coord, d)));
-      if (!nb || !TRACK_JOIN_TYPES.has(nb.type)) continue;
+      if (!nb || !TRACK_JOIN_TYPES.has(nb.type) || nb.type === 'spawner') continue;
       if (nb.type !== 'sink' && nb.type !== 'destroyer' && oppositeDir(d) === nb.config.dir) continue;
 
       const wB = hexToWorld(nb.coord);
       const midX = (wA.x + wB.x) * 0.5;
       const midZ = (wA.z + wB.z) * 0.5;
       const yaw = dirToWorldYaw(d);
+      const dx = wB.x - wA.x;
+      const dz = wB.z - wA.z;
+      const dist = Math.hypot(dx, dz) || 1;
+      const ux = dx / dist;
+      const uz = dz / dist;
+
+      const mIsConv = m.type === 'conveyor';
+      const nbIsConv = nb.type === 'conveyor';
+
+      if (mIsConv && nbIsConv) {
+        // Both conveyors meet flush at HEX_APOTHEM: tiny threshold plate prevents hairline seam cracks with zero rail protrusion
+        const seamPlate = new THREE.Mesh(
+          new THREE.BoxGeometry(0.055, 0.085, beltWidth - 0.02),
+          beltMat,
+        );
+        seamPlate.position.set(midX, 0.106, midZ);
+        seamPlate.rotation.y = yaw;
+        group.add(seamPlate);
+        continue;
+      }
+
+      // Bridge only into the non-conveyor side so conveyor curves remain unobstructed
+      let seamLen = 0.48;
+      let offsetAlong = 0;
+      if (!mIsConv && nbIsConv) {
+        seamLen = 0.34;
+        offsetAlong = -0.16;
+      } else if (mIsConv && !nbIsConv) {
+        seamLen = 0.34;
+        offsetAlong = 0.16;
+      }
 
       const coupler = new THREE.Group();
-      coupler.position.set(midX, 0, midZ);
+      coupler.position.set(midX + ux * offsetAlong, 0, midZ + uz * offsetAlong);
       coupler.rotation.y = yaw;
 
       const bridgeBelt = new THREE.Mesh(
-        new THREE.BoxGeometry(seamLen, 0.085, seamWidth),
+        new THREE.BoxGeometry(seamLen, 0.084, beltWidth),
         beltMat,
       );
-      bridgeBelt.position.y = 0.102;
+      bridgeBelt.position.y = 0.106;
       coupler.add(bridgeBelt);
 
-      for (const zRail of [-0.47, 0.47]) {
+      for (const zRail of [-0.42, 0.42]) {
         const railJoin = new THREE.Mesh(
-          new THREE.BoxGeometry(seamLen + 0.06, 0.13, 0.105),
+          new THREE.BoxGeometry(seamLen, 0.135, 0.08),
           railMat,
         );
-        railJoin.position.set(0, 0.135, zRail);
+        railJoin.position.set(0, 0.136, zRail);
         coupler.add(railJoin);
       }
 

@@ -87,6 +87,8 @@ export type TokenMoveSource =
 export interface Token {
   id: string;
   value: number;
+  /** Value at the start of the current tick (shown while traveling until machine trigger) */
+  prevValue?: number;
   coord: AxialCoord;
   /** Visual interpolation start coordinate from previous tick */
   prevCoord: AxialCoord;
@@ -101,6 +103,18 @@ export interface Token {
   producedByAdderAtTick?: number;
   /** Track origin spawner / stream id if needed */
   spawnOrder: number;
+}
+
+export type ConsumedTokenKind = 'deliver' | 'store' | 'destroy' | 'merge';
+
+export interface ConsumedTokenVisual {
+  id: string;
+  value: number;
+  coord: AxialCoord;
+  prevCoord: AxialCoord;
+  moveSource?: TokenMoveSource;
+  rotatedFrom?: Token['rotatedFrom'];
+  kind: ConsumedTokenKind;
 }
 
 export interface BondEdge {
@@ -186,6 +200,10 @@ export interface SimulationWorld {
   errorHighlightHexes: AxialCoord[];
   errorReason: string | null;
   fallingTokens?: Array<{ value: number; fromCoord: AxialCoord; toCoord: AxialCoord }>;
+  /** Tokens consumed on this tick (delivered, stored, shredded, merged) so 3D view animates arrival -> pause -> absorb */
+  consumedTokens?: ConsumedTokenVisual[];
+  /** Bonds connecting consumed multi-node polymers so rods remain intact until trigger absorption */
+  consumedBonds?: BondEdge[];
   nextTokenId: number;
   nextSpawnOrder: number;
   minValue: number;
@@ -274,11 +292,23 @@ export interface LevelDefinition {
     locked: boolean;
     config: MachineConfig;
   }>;
-  /** Optional pre-built reference solution (unlocked after victory) */
+  /** Optional pre-built reference solution (immediately available in demo mode) */
   demoSolution?: Array<{
     type: MachineType;
     coord: AxialCoord;
     config: MachineConfig;
+  }>;
+  /** Short label describing the primary reference solution (Эталон 1) */
+  demoLabel?: string;
+  /** Optional alternative optimal reference solutions (Эталон 2, Эталон 3, ...) */
+  altDemoSolutions?: Array<{
+    label: string;
+    description?: string;
+    blocks: Array<{
+      type: MachineType;
+      coord: AxialCoord;
+      config: MachineConfig;
+    }>;
   }>;
   /** Multi-schedule / hidden algorithm test cases */
   verificationRuns?: Array<{

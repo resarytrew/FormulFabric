@@ -29,7 +29,7 @@ interface OutcomeModalProps {
   hasNextLevel: boolean;
   onNextLevel: () => void;
   onReplay: () => void;
-  onApplyDemo?: () => void;
+  onApplyDemo?: (variantIdx: number) => void;
   onResume: () => void;
   onBackToTitle: () => void;
   onFixAndReset: () => void;
@@ -56,21 +56,21 @@ function MetricHistogram({
   const metMedal = value <= goldThreshold;
 
   return (
-    <div className="rounded-xl border border-[#141e1a]/25 bg-white p-2.5">
+    <div className="rounded-xl border border-[#141e1a]/25 dark:border-slate-700/70 bg-white dark:bg-slate-900/70 p-2.5">
       <div className="flex items-center justify-between gap-2 text-xs mb-1.5">
-        <span className="font-bold text-[#141e1a]">{label}</span>
+        <span className="font-bold text-[#141e1a] dark:text-slate-100">{label}</span>
         <span className="font-mono-tabular flex items-center gap-1.5">
-          <span className="font-extrabold text-[#141e1a]">
+          <span className="font-extrabold text-[#141e1a] dark:text-slate-100">
             {value} {unit}
           </span>
           <span className="text-slate-400">·</span>
           {metMedal ? (
-            <span className="text-[#1f8f45] font-bold flex items-center gap-0.5">
+            <span className="text-[#1f8f45] dark:text-emerald-400 font-bold flex items-center gap-0.5">
               <Award className="w-3.5 h-3.5" />
               Медаль (≤ {goldThreshold})
             </span>
           ) : (
-            <span className="text-slate-600 flex items-center gap-0.5">
+            <span className="text-slate-600 dark:text-slate-400 flex items-center gap-0.5">
               <Target className="w-3 h-3" />
               Цель ≤ {goldThreshold}
             </span>
@@ -87,14 +87,14 @@ function MetricHistogram({
             <div key={`${bucketVal}-${i}`} className="flex-1 flex flex-col items-center gap-0.5">
               <div className="w-full h-7 flex items-end">
                 <div
-                  className={`w-full rounded-t border border-[#141e1a] transition-all ${
+                  className={`w-full rounded-t border border-[#141e1a] dark:border-slate-700 transition-all ${
                     isPlayer
                       ? metMedal
-                        ? 'bg-[#26b557]'
-                        : 'bg-[#f0861a]'
+                        ? 'bg-[#26b557] dark:bg-emerald-500'
+                        : 'bg-[#f0861a] dark:bg-amber-500'
                       : isGoldBucket
-                        ? 'bg-[#cdebd8]'
-                        : 'bg-slate-200'
+                        ? 'bg-[#cdebd8] dark:bg-emerald-950/70'
+                        : 'bg-slate-200 dark:bg-slate-800'
                   }`}
                   style={{ height: `${heightPct}%` }}
                   title={
@@ -106,7 +106,9 @@ function MetricHistogram({
               </div>
               <span
                 className={`text-[10px] font-mono-tabular leading-none ${
-                  isPlayer ? 'font-extrabold text-[#141e1a]' : 'text-slate-500'
+                  isPlayer
+                    ? 'font-extrabold text-[#141e1a] dark:text-slate-100'
+                    : 'text-slate-500 dark:text-slate-400'
                 }`}
               >
                 {isPlayer ? `Вы:${bucketVal}` : bucketVal}
@@ -144,16 +146,16 @@ function MathRevealCard({ reveal }: { reveal: MathRevealSpec }) {
   return (
     <div
       data-testid="victory-math-reveal"
-      className="mb-3 rounded-xl border-2 border-[#141e1a] bg-[#f5f3ff] p-3"
+      className="mb-3 rounded-xl border border-[#141e1a] dark:border-violet-500/45 bg-[#f5f3ff] dark:bg-violet-950/35 p-3"
     >
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex items-center gap-1.5 min-w-0">
-          <Sparkles className="w-4 h-4 text-[#7c3aed] shrink-0" />
+          <Sparkles className="w-4 h-4 text-[#7c3aed] dark:text-violet-400 shrink-0" />
           <div className="min-w-0">
-            <div className="text-[11px] font-bold uppercase tracking-wide text-[#5b21b6]">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-[#5b21b6] dark:text-violet-300">
               Математическая разгадка
             </div>
-            <div className="font-display font-extrabold text-sm text-[#141e1a] leading-tight">
+            <div className="font-display font-extrabold text-sm text-[#141e1a] dark:text-slate-100 leading-tight">
               {reveal.headline}
             </div>
           </div>
@@ -162,9 +164,9 @@ function MathRevealCard({ reveal }: { reveal: MathRevealSpec }) {
           type="button"
           onClick={() => setAnimKey((k) => k + 1)}
           aria-label="Повторить анимацию объяснения"
-          className="cel-btn px-2 py-1 rounded-lg bg-white text-[11px] font-bold text-[#141e1a] flex items-center gap-1 cursor-pointer shrink-0"
+          className="hud-btn px-2 py-1 rounded-lg bg-white dark:bg-slate-800 text-[11px] font-bold text-[#141e1a] dark:text-slate-200 flex items-center gap-1 cursor-pointer shrink-0"
         >
-          <Play className="w-3 h-3 text-[#7c3aed]" />
+          <Play className="w-3 h-3 text-[#7c3aed] dark:text-violet-400" />
           <span>Повторить</span>
         </button>
       </div>
@@ -177,26 +179,26 @@ function MathRevealCard({ reveal }: { reveal: MathRevealSpec }) {
               key={`${animKey}-${idx}`}
               className={`math-step-enter rounded-lg border p-2 transition-colors ${
                 isCurrent
-                  ? 'border-[#7c3aed] bg-white'
-                  : 'border-[#141e1a]/20 bg-white/85'
+                  ? 'border-[#7c3aed] dark:border-violet-400 bg-white dark:bg-slate-900/90'
+                  : 'border-[#141e1a]/20 dark:border-slate-700/70 bg-white/85 dark:bg-slate-900/60'
               }`}
             >
               <div className="flex flex-wrap items-center justify-between gap-1.5 mb-0.5">
-                <span className="text-[10px] font-bold uppercase tracking-wide text-[#6d28d9]">
+                <span className="text-[10px] font-bold uppercase tracking-wide text-[#6d28d9] dark:text-violet-300">
                   {step.label}
                 </span>
-                <span className="font-mono-tabular font-extrabold text-xs px-2 py-0.5 rounded bg-[#ede9fe] text-[#141e1a] border border-[#7c3aed]/30">
+                <span className="font-mono-tabular font-extrabold text-xs px-2 py-0.5 rounded bg-[#ede9fe] dark:bg-violet-900/50 text-[#141e1a] dark:text-violet-100 border border-[#7c3aed]/30 dark:border-violet-500/40">
                   {step.expression}
                 </span>
               </div>
-              <p className="text-[11px] text-slate-700 leading-snug">{step.caption}</p>
+              <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-snug">{step.caption}</p>
             </div>
           );
         })}
       </div>
 
       {visibleSteps >= reveal.steps.length && (
-        <p className="math-step-enter mt-2 pt-1.5 border-t border-[#7c3aed]/20 text-[11px] font-medium text-[#3b0764] leading-snug">
+        <p className="math-step-enter mt-2 pt-1.5 border-t border-[#7c3aed]/20 dark:border-violet-500/30 text-[11px] font-medium text-[#3b0764] dark:text-violet-200 leading-snug">
           {reveal.summary}
         </p>
       )}
@@ -225,20 +227,20 @@ export function OutcomeModal({
 
   if (mode === 'error') {
     return (
-      <div className="fixed top-56 left-3 right-3 sm:top-20 sm:left-auto sm:right-3 sm:max-w-sm z-20 cel-panel rounded-2xl p-4 border-red-900 bg-[#fff5f5]">
+      <div className="fixed top-40 left-3 right-3 sm:top-16 sm:left-auto sm:right-3 sm:max-w-sm z-20 hud-panel rounded-2xl p-4 border-red-900 dark:border-rose-500/50 bg-[#fff5f5] dark:bg-[#1e1015]">
         <div className="flex items-start gap-2.5">
-          <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+          <AlertTriangle className="w-5 h-5 text-red-600 dark:text-rose-400 shrink-0 mt-0.5" />
           <div className="min-w-0 flex-1">
-            <h3 className="font-display font-bold text-sm text-red-950">
+            <h3 className="font-display font-bold text-sm text-red-950 dark:text-rose-100">
               Диагностика остановки (такт {world.tick})
             </h3>
-            <p className="text-xs text-red-900 mt-1 leading-relaxed">
+            <p className="text-xs text-red-900 dark:text-rose-200/90 mt-1 leading-relaxed">
               {world.errorReason ?? 'Обнаружена ошибка в конструкции линии.'}
             </p>
 
             {verificationReport && verificationReport.passed < verificationReport.total && (
-              <div className="mt-2.5 rounded-lg border border-red-900/25 bg-white p-2 space-y-1">
-                <div className="text-[11px] font-bold text-red-950">
+              <div className="mt-2.5 rounded-lg border border-red-900/25 dark:border-rose-500/35 bg-white dark:bg-slate-900/80 p-2 space-y-1">
+                <div className="text-[11px] font-bold text-red-950 dark:text-rose-200">
                   Проверка на всех входных наборах ({verificationReport.passed}/{verificationReport.total}):
                 </div>
                 {verificationReport.results.map((r, i) => (
@@ -246,18 +248,18 @@ export function OutcomeModal({
                     <div className="flex items-start justify-between gap-2 text-[11px]">
                       <span className="flex items-center gap-1 min-w-0">
                         {r.passed ? (
-                          <CheckCircle2 className="w-3.5 h-3.5 text-[#26b557] shrink-0" />
+                          <CheckCircle2 className="w-3.5 h-3.5 text-[#26b557] dark:text-emerald-400 shrink-0" />
                         ) : (
-                          <XCircle className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                          <XCircle className="w-3.5 h-3.5 text-red-600 dark:text-rose-400 shrink-0" />
                         )}
-                        <span className="truncate font-medium text-[#141e1a]">{r.name}</span>
+                        <span className="truncate font-medium text-[#141e1a] dark:text-slate-200">{r.name}</span>
                       </span>
-                      <span className="font-mono-tabular text-slate-600 shrink-0">
+                      <span className="font-mono-tabular text-slate-600 dark:text-slate-400 shrink-0">
                         {r.passed ? `${r.ticks} т.` : 'сбой'}
                       </span>
                     </div>
                     {!r.passed && r.reason && (
-                      <div className="text-[10px] text-red-800 pl-4 leading-snug">
+                      <div className="text-[10px] text-red-800 dark:text-rose-300 pl-4 leading-snug">
                         {r.reason}
                       </div>
                     )}
@@ -271,16 +273,16 @@ export function OutcomeModal({
                 <button
                   type="button"
                   onClick={onFocusError}
-                  className="cel-btn px-3 py-1.5 rounded-lg bg-white text-[#141e1a] text-xs font-bold flex items-center gap-1 cursor-pointer"
+                  className="hud-btn px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 text-[#141e1a] dark:text-slate-100 text-xs font-bold flex items-center gap-1 cursor-pointer"
                 >
-                  <Crosshair className="w-3.5 h-3.5 text-red-600" />
+                  <Crosshair className="w-3.5 h-3.5 text-red-600 dark:text-rose-400" />
                   <span>Показать узел</span>
                 </button>
               )}
               <button
                 type="button"
                 onClick={onFixAndReset}
-                className="cel-btn px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
+                className="hud-btn px-3 py-1.5 rounded-lg bg-red-600 dark:bg-rose-500 text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Сбросить и исправить</span>
@@ -294,33 +296,33 @@ export function OutcomeModal({
 
   if (mode === 'paused') {
     return (
-      <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
-        <div className="cel-panel rounded-2xl max-w-sm w-full p-6 text-center">
-          <h2 className="font-display text-2xl font-extrabold text-[#141e1a] mb-1">
+      <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/55 p-4">
+        <div className="hud-panel rounded-2xl max-w-sm w-full p-6 text-center">
+          <h2 className="font-display text-2xl font-extrabold text-[#141e1a] dark:text-slate-100 mb-1">
             Пауза
           </h2>
-          <p className="text-xs text-slate-600 mb-5">
+          <p className="text-xs text-slate-600 dark:text-slate-400 mb-5">
             {level.title} · Такт {world.tick}
           </p>
           <div className="flex flex-col gap-2.5">
             <button
               type="button"
               onClick={onResume}
-              className="cel-btn w-full py-2.5 rounded-xl bg-[#26b557] text-white font-bold text-sm cursor-pointer"
+              className="hud-btn w-full py-2.5 rounded-xl bg-[#26b557] dark:bg-emerald-500 text-white dark:text-slate-950 font-bold text-sm cursor-pointer"
             >
               Продолжить
             </button>
             <button
               type="button"
               onClick={onFixAndReset}
-              className="cel-btn w-full py-2.5 rounded-xl bg-white text-[#141e1a] font-bold text-sm cursor-pointer"
+              className="hud-btn w-full py-2.5 rounded-xl bg-white dark:bg-slate-800 text-[#141e1a] dark:text-slate-100 font-bold text-sm cursor-pointer"
             >
               Сбросить такты
             </button>
             <button
               type="button"
               onClick={onBackToTitle}
-              className="cel-btn w-full py-2.5 rounded-xl bg-[#eef2ef] text-[#141e1a] font-semibold text-sm cursor-pointer"
+              className="hud-btn w-full py-2.5 rounded-xl bg-[#eef5f1] dark:bg-slate-800/70 text-[#141e1a] dark:text-slate-300 font-semibold text-sm cursor-pointer"
             >
               В главное меню
             </button>
@@ -341,16 +343,21 @@ export function OutcomeModal({
   const earnedMedalsCount = Number(blocksMedal) + Number(ticksMedal) + Number(areaMedal);
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
-      <div className="cel-panel rounded-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto cel-scroll p-5 sm:p-6 pb-4">
-        <div className="flex items-start justify-between gap-3 mb-3">
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/55 p-4">
+      <div
+        role="dialog"
+        aria-label="Результаты уровня"
+        className="hud-panel rounded-2xl max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden"
+      >
+        <div className="flex-1 overflow-y-auto cel-scroll p-5 sm:p-6 pb-3">
+          <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex items-center gap-2.5">
-            <CheckCircle2 className="w-7 h-7 text-[#26b557] shrink-0" />
+            <CheckCircle2 className="w-7 h-7 text-[#26b557] dark:text-emerald-400 shrink-0" />
             <div>
-              <h2 className="font-display text-2xl font-extrabold text-[#141e1a] leading-tight">
+              <h2 className="font-display text-2xl font-extrabold text-[#141e1a] dark:text-slate-100 leading-tight">
                 Фабрика принята!
               </h2>
-              <p className="text-xs text-slate-600">
+              <p className="text-xs text-slate-600 dark:text-slate-400">
                 {level.title} · Медали: {earnedMedalsCount}/3 ·{' '}
                 {hintsUsed > 0 ? `Подсказок: ${hintsUsed}` : 'Самостоятельно'}
               </p>
@@ -359,7 +366,7 @@ export function OutcomeModal({
           {verificationReport && verificationReport.total > 0 && (
             <div
               data-testid="victory-verification-score"
-              className="text-xs font-mono-tabular font-bold text-[#1f8f45] flex items-center gap-1 shrink-0"
+              className="text-xs font-mono-tabular font-bold text-[#1f8f45] dark:text-emerald-400 flex items-center gap-1 shrink-0"
             >
               <CheckCircle2 className="w-4 h-4" />
               <span>
@@ -371,14 +378,14 @@ export function OutcomeModal({
 
         {/* 3 KPI Summary Cards */}
         <div className="grid grid-cols-3 gap-2 mb-3">
-          <div className="rounded-xl border-2 border-[#141e1a] bg-[#f4f8f5] p-2.5 text-center">
-            <div className="text-[11px] font-semibold text-slate-500">Блоки</div>
-            <div className="font-mono-tabular font-extrabold text-xl text-[#141e1a]">
+          <div className="rounded-xl border border-[#141e1a] dark:border-slate-700/70 bg-[#f4f8f5] dark:bg-slate-900/75 p-2.5 text-center">
+            <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Блоки</div>
+            <div className="font-mono-tabular font-extrabold text-xl text-[#141e1a] dark:text-slate-100">
               {playerBlockCount}
             </div>
-            <div className="text-[11px] font-mono-tabular font-bold text-slate-600 mt-0.5 flex items-center justify-center gap-1">
+            <div className="text-[11px] font-mono-tabular font-bold text-slate-600 dark:text-slate-400 mt-0.5 flex items-center justify-center gap-1">
               {blocksMedal ? (
-                <span className="text-[#1f8f45] flex items-center gap-0.5">
+                <span className="text-[#1f8f45] dark:text-emerald-400 flex items-center gap-0.5">
                   <Award className="w-3 h-3" /> Медаль
                 </span>
               ) : (
@@ -387,14 +394,14 @@ export function OutcomeModal({
             </div>
           </div>
 
-          <div className="rounded-xl border-2 border-[#141e1a] bg-[#f4f8f5] p-2.5 text-center">
-            <div className="text-[11px] font-semibold text-slate-500">Такты</div>
-            <div className="font-mono-tabular font-extrabold text-xl text-[#141e1a]">
+          <div className="rounded-xl border border-[#141e1a] dark:border-slate-700/70 bg-[#f4f8f5] dark:bg-slate-900/75 p-2.5 text-center">
+            <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Такты</div>
+            <div className="font-mono-tabular font-extrabold text-xl text-[#141e1a] dark:text-slate-100">
               {world.tick}
             </div>
-            <div className="text-[11px] font-mono-tabular font-bold text-slate-600 mt-0.5 flex items-center justify-center gap-1">
+            <div className="text-[11px] font-mono-tabular font-bold text-slate-600 dark:text-slate-400 mt-0.5 flex items-center justify-center gap-1">
               {ticksMedal ? (
-                <span className="text-[#1f8f45] flex items-center gap-0.5">
+                <span className="text-[#1f8f45] dark:text-emerald-400 flex items-center gap-0.5">
                   <Award className="w-3 h-3" /> Медаль
                 </span>
               ) : (
@@ -403,17 +410,17 @@ export function OutcomeModal({
             </div>
           </div>
 
-          <div className="rounded-xl border-2 border-[#141e1a] bg-[#f4f8f5] p-2.5 text-center">
-            <div className="text-[11px] font-semibold text-slate-500">Площадь</div>
+          <div className="rounded-xl border border-[#141e1a] dark:border-slate-700/70 bg-[#f4f8f5] dark:bg-slate-900/75 p-2.5 text-center">
+            <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Площадь</div>
             <div
               data-testid="victory-area-metric"
-              className="font-mono-tabular font-extrabold text-xl text-[#141e1a]"
+              className="font-mono-tabular font-extrabold text-xl text-[#141e1a] dark:text-slate-100"
             >
               {area}
             </div>
-            <div className="text-[11px] font-mono-tabular font-bold text-slate-600 mt-0.5 flex items-center justify-center gap-1">
+            <div className="text-[11px] font-mono-tabular font-bold text-slate-600 dark:text-slate-400 mt-0.5 flex items-center justify-center gap-1">
               {areaMedal ? (
-                <span className="text-[#1f8f45] flex items-center gap-0.5">
+                <span className="text-[#1f8f45] dark:text-emerald-400 flex items-center gap-0.5">
                   <Award className="w-3 h-3" /> Медаль
                 </span>
               ) : (
@@ -453,21 +460,21 @@ export function OutcomeModal({
         )}
 
         {verificationReport && verificationReport.results.length > 0 && (
-          <div className="rounded-xl border border-[#141e1a]/20 bg-white px-3 py-2 text-xs mb-3 space-y-1">
-            <div className="font-bold text-[#141e1a]">
+          <div className="rounded-xl border border-[#141e1a]/20 dark:border-slate-700/70 bg-white dark:bg-slate-900/75 px-3 py-2 text-xs mb-3 space-y-1">
+            <div className="font-bold text-[#141e1a] dark:text-slate-100">
               Проверенные наборы входных данных:
             </div>
             {verificationReport.results.map((r, i) => (
               <div key={i} className="flex items-center justify-between gap-2 text-[11px]">
                 <span className="flex items-center gap-1.5 min-w-0 truncate">
                   {r.passed ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-[#26b557] shrink-0" />
+                    <CheckCircle2 className="w-3.5 h-3.5 text-[#26b557] dark:text-emerald-400 shrink-0" />
                   ) : (
-                    <XCircle className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                    <XCircle className="w-3.5 h-3.5 text-red-600 dark:text-rose-400 shrink-0" />
                   )}
                   <span className="truncate">{r.name}</span>
                 </span>
-                <span className="font-mono-tabular text-slate-600 shrink-0">
+                <span className="font-mono-tabular text-slate-600 dark:text-slate-400 shrink-0">
                   {r.passed ? `${r.ticks} т.` : 'ошибка'}
                 </span>
               </div>
@@ -477,8 +484,8 @@ export function OutcomeModal({
 
         {/* Optional explanation reflection question */}
         {level.explainQuestion && (
-          <div className="mb-3 rounded-xl border border-[#141e1a]/25 bg-white p-3">
-            <div className="text-xs font-bold text-[#141e1a] mb-2">
+          <div className="mb-3 rounded-xl border border-[#141e1a]/25 dark:border-slate-700/70 bg-white dark:bg-slate-900/75 p-3">
+            <div className="text-xs font-bold text-[#141e1a] dark:text-slate-100 mb-2">
               Вопрос «Почему это работает?»: {level.explainQuestion.prompt}
             </div>
             <div className="space-y-1.5">
@@ -490,9 +497,9 @@ export function OutcomeModal({
                   className={`w-full text-left text-xs px-2.5 py-1.5 rounded-lg border cursor-pointer transition-colors ${
                     selectedAnswer === idx
                       ? idx === level.explainQuestion!.correctIdx
-                        ? 'bg-emerald-100 border-emerald-700 font-semibold text-emerald-950'
-                        : 'bg-red-100 border-red-700 text-red-950'
-                      : 'bg-slate-50 border-slate-300 hover:bg-slate-100'
+                        ? 'bg-emerald-100 dark:bg-emerald-950/70 border-emerald-700 dark:border-emerald-500 font-semibold text-emerald-950 dark:text-emerald-200'
+                        : 'bg-red-100 dark:bg-rose-950/70 border-red-700 dark:border-rose-500 text-red-950 dark:text-rose-200'
+                      : 'bg-slate-50 dark:bg-slate-800/80 border-slate-300 dark:border-slate-700 text-[#141e1a] dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
                   }`}
                 >
                   {opt}
@@ -500,20 +507,21 @@ export function OutcomeModal({
               ))}
             </div>
             {selectedAnswer !== null && (
-              <div className="mt-2 text-[11px] text-slate-700">
+              <div className="mt-2 text-[11px] text-slate-700 dark:text-slate-300">
                 {level.explainQuestion.explanation}
               </div>
             )}
           </div>
         )}
+        </div>
 
-        <div className="sticky -bottom-4 bg-[#f7faf8] pt-2.5 pb-1 mt-1 border-t border-[#141e1a]/15 flex flex-wrap items-center gap-2">
+        <div className="shrink-0 bg-[#f7faf8] dark:bg-[#0d131c] px-5 sm:px-6 py-3 border-t border-[#141e1a]/15 dark:border-slate-700/70 flex flex-wrap items-center gap-1.5 sm:gap-2">
           {hasNextLevel && (
             <button
               type="button"
               data-start="true"
               onClick={onNextLevel}
-              className="cel-btn flex-1 py-2.5 px-4 rounded-xl bg-[#26b557] text-white font-bold text-sm cursor-pointer whitespace-nowrap"
+              className="hud-btn flex-1 min-w-[155px] py-2 px-3 rounded-xl bg-[#26b557] dark:bg-emerald-500 text-white dark:text-slate-950 font-bold text-xs sm:text-[13px] cursor-pointer whitespace-nowrap"
             >
               Следующий уровень
             </button>
@@ -521,19 +529,45 @@ export function OutcomeModal({
           <button
             type="button"
             onClick={onReplay}
-            className="cel-btn px-3.5 py-2.5 rounded-xl bg-white text-[#141e1a] font-bold text-sm cursor-pointer whitespace-nowrap"
+            className="hud-btn px-3 py-2 rounded-xl bg-white dark:bg-slate-800 text-[#141e1a] dark:text-slate-100 font-bold text-xs sm:text-[13px] cursor-pointer whitespace-nowrap"
           >
             Улучшить схему
           </button>
           {level.demoSolution && onApplyDemo && (
-            <button
-              type="button"
-              onClick={onApplyDemo}
-              className="cel-btn px-3.5 py-2.5 rounded-xl bg-[#fef3c7] text-[#141e1a] font-bold text-sm flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-            >
-              <Lightbulb className="w-4 h-4" />
-              <span>Эталон</span>
-            </button>
+            level.altDemoSolutions && level.altDemoSolutions.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onApplyDemo(0)}
+                  title={level.demoLabel ?? 'Эталон 1'}
+                  className="hud-btn px-2.5 py-2 rounded-xl bg-[#fef3c7] dark:bg-amber-400/20 text-[#141e1a] dark:text-amber-200 dark:border-amber-400/40 font-bold text-xs sm:text-[13px] flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                >
+                  <Lightbulb className="w-3.5 h-3.5 shrink-0" />
+                  <span>Эталон 1</span>
+                </button>
+                {level.altDemoSolutions.map((alt, idx) => (
+                  <button
+                    key={alt.label}
+                    type="button"
+                    onClick={() => onApplyDemo(idx + 1)}
+                    title={alt.description ?? alt.label}
+                    className="hud-btn px-2.5 py-2 rounded-xl bg-[#eef5f1] dark:bg-slate-800 text-[#141e1a] dark:text-slate-200 font-bold text-xs sm:text-[13px] flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                  >
+                    <Lightbulb className="w-3.5 h-3.5 shrink-0" />
+                    <span>Эталон {idx + 2}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onApplyDemo(0)}
+                className="hud-btn px-3 py-2 rounded-xl bg-[#fef3c7] dark:bg-amber-400/20 text-[#141e1a] dark:text-amber-200 dark:border-amber-400/40 font-bold text-xs sm:text-[13px] flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              >
+                <Lightbulb className="w-3.5 h-3.5 shrink-0" />
+                <span>Эталон</span>
+              </button>
+            )
           )}
         </div>
       </div>

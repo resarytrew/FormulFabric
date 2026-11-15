@@ -64,16 +64,16 @@ export function MachineInspector({
   return (
     <aside
       aria-label="Свойства механизма"
-      className="fixed top-56 left-3 right-3 max-h-[calc(100vh-27rem)] sm:top-20 sm:left-auto sm:right-3 sm:w-64 sm:max-h-[calc(100vh-14rem)] z-20 cel-panel rounded-2xl p-3.5 text-[#141e1a] flex flex-col gap-2.5 overflow-y-auto cel-scroll"
+      className="fixed top-40 left-3 right-3 max-h-[calc(100vh-22rem)] sm:top-16 sm:left-auto sm:right-3 sm:w-64 sm:max-h-[calc(100vh-12rem)] z-20 hud-panel rounded-2xl p-3.5 text-[#141e1a] dark:text-slate-100 flex flex-col gap-2.5 overflow-y-auto cel-scroll"
     >
-      <div className="flex items-center justify-between gap-2 border-b border-black/15 pb-2">
+      <div className="flex items-center justify-between gap-2 border-b border-black/15 dark:border-slate-700/70 pb-2">
         <div className="flex items-center gap-2 min-w-0">
-          <Sliders className="w-4 h-4 text-[#26b557] shrink-0" />
+          <Sliders className="w-4 h-4 text-[#26b557] dark:text-amber-400 shrink-0" />
           <div className="min-w-0">
             <div className="font-display font-bold text-sm leading-tight truncate">
               {meta.label}
             </div>
-            <div className="text-[11px] font-mono-tabular text-slate-500">
+            <div className="text-[11px] font-mono-tabular text-slate-500 dark:text-slate-400">
               Гекс ({block.coord.q}, {block.coord.r})
             </div>
           </div>
@@ -82,7 +82,7 @@ export function MachineInspector({
           type="button"
           onClick={onClose}
           aria-label="Закрыть инспектор"
-          className="cel-btn p-1 rounded-lg bg-white cursor-pointer"
+          className="hud-btn p-1 rounded-lg bg-white dark:bg-slate-800 text-[#141e1a] dark:text-slate-200 cursor-pointer"
         >
           <X className="w-3.5 h-3.5" />
         </button>
@@ -90,7 +90,7 @@ export function MachineInspector({
 
       {/* Primary Direction */}
       <div className="flex items-center justify-between gap-2 text-xs">
-        <span className="font-semibold text-slate-600">Выход (осн.):</span>
+        <span className="font-semibold text-slate-600 dark:text-slate-300">Выход (осн.):</span>
         <button
           type="button"
           disabled={isRunning}
@@ -99,7 +99,7 @@ export function MachineInspector({
             onUpdateConfig(block.coord, { dir: nextDir });
           }}
           aria-label="Повернуть выход механизма"
-          className="cel-btn px-2.5 py-1 rounded-lg bg-white font-bold flex items-center gap-1 cursor-pointer"
+          className="hud-btn px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 text-[#141e1a] dark:text-slate-100 font-bold flex items-center gap-1 cursor-pointer"
         >
           <RotateCw className="w-3.5 h-3.5" />
           <span>{DIR_LABELS_RU[block.config.dir]}</span>
@@ -109,7 +109,7 @@ export function MachineInspector({
       {/* Rotator Mode */}
       {block.type === 'rotator' && (
         <div className="flex items-center justify-between gap-2 text-xs">
-          <span className="font-semibold text-slate-600">Вращение:</span>
+          <span className="font-semibold text-slate-600 dark:text-slate-300">Вращение:</span>
           <button
             type="button"
             disabled={isRunning}
@@ -119,7 +119,7 @@ export function MachineInspector({
               })
             }
             aria-label="Переключить направление вращения ротатора"
-            className="cel-btn px-2.5 py-1 rounded-lg bg-[#eef5f1] font-bold cursor-pointer"
+            className="hud-btn px-2.5 py-1 rounded-lg bg-[#eef5f1] dark:bg-slate-800 text-[#141e1a] dark:text-cyan-300 font-bold cursor-pointer"
           >
             {block.config.rotMode === 'ccw' ? '↺ Против час.' : '↻ По час.'}
           </button>
@@ -130,7 +130,7 @@ export function MachineInspector({
       {block.type === 'filter' && (
         <div className="flex flex-col gap-2 text-xs">
           <label className="flex flex-col gap-1">
-            <span className="font-semibold text-slate-600">Условие прямо:</span>
+            <span className="font-semibold text-slate-600 dark:text-slate-300">Условие прямо:</span>
             <select
               disabled={isRunning}
               aria-label="Правило фильтра"
@@ -140,7 +140,7 @@ export function MachineInspector({
                   filterRule: e.target.value as FilterRule,
                 })
               }
-              className="px-2 py-1 rounded-lg border border-[#141e1a] bg-white font-semibold text-xs cursor-pointer"
+              className="px-2 py-1 rounded-lg border border-[#141e1a] dark:border-slate-600 bg-white dark:bg-slate-800 text-[#141e1a] dark:text-slate-100 font-semibold text-xs cursor-pointer"
             >
               {FILTER_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -150,7 +150,7 @@ export function MachineInspector({
             </select>
           </label>
           <label className="flex items-center justify-between gap-2">
-            <span className="font-semibold text-slate-600">Иначе порт:</span>
+            <span className="font-semibold text-slate-600 dark:text-slate-300">Иначе порт:</span>
             <select
               disabled={isRunning}
               aria-label="Дополнительное направление фильтра"
@@ -160,7 +160,7 @@ export function MachineInspector({
                   altDir: Number(e.target.value) as HexDir,
                 })
               }
-              className="px-2 py-1 rounded-lg border border-[#141e1a] bg-white font-semibold text-xs cursor-pointer"
+              className="px-2 py-1 rounded-lg border border-[#141e1a] dark:border-slate-600 bg-white dark:bg-slate-800 text-[#141e1a] dark:text-slate-100 font-semibold text-xs cursor-pointer"
             >
               {([0, 1, 2, 3, 4, 5] as HexDir[]).map((d) => (
                 <option key={d} value={d}>
@@ -176,11 +176,11 @@ export function MachineInspector({
       {block.type === 'divmod' && (
         <div className="flex flex-col gap-2 text-xs">
           <div className="flex items-center justify-between gap-2">
-            <span className="font-semibold text-slate-600">Делитель b:</span>
+            <span className="font-semibold text-slate-600 dark:text-slate-300">Делитель b:</span>
             {fixedDivisor !== undefined ? (
               <span
                 data-testid="inspector-divisor"
-                className="font-mono-tabular font-extrabold px-2 py-0.5 rounded bg-[#ede9fe] text-[#5b21b6] border border-[#141e1a]/30"
+                className="font-mono-tabular font-extrabold px-2 py-0.5 rounded bg-[#ede9fe] dark:bg-violet-950/60 text-[#5b21b6] dark:text-violet-300 border border-[#141e1a]/30 dark:border-violet-500/40"
                 title="Делитель зафиксирован условием уровня"
               >
                 {fixedDivisor} (фикс.)
@@ -196,7 +196,7 @@ export function MachineInspector({
                       divisor: Math.max(2, (block.config.divisor ?? 2) - 1),
                     })
                   }
-                  className="cel-btn w-6 h-6 rounded bg-white font-bold cursor-pointer"
+                  className="hud-btn w-6 h-6 rounded bg-white dark:bg-slate-800 font-bold cursor-pointer"
                 >
                   −
                 </button>
@@ -215,7 +215,7 @@ export function MachineInspector({
                       divisor: Math.min(12, (block.config.divisor ?? 2) + 1),
                     })
                   }
-                  className="cel-btn w-6 h-6 rounded bg-white font-bold cursor-pointer"
+                  className="hud-btn w-6 h-6 rounded bg-white dark:bg-slate-800 font-bold cursor-pointer"
                 >
                   +
                 </button>
@@ -223,7 +223,7 @@ export function MachineInspector({
             )}
           </div>
           <label className="flex items-center justify-between gap-2">
-            <span className="font-semibold text-slate-600">Порт остатка r:</span>
+            <span className="font-semibold text-slate-600 dark:text-slate-300">Порт остатка r:</span>
             <select
               disabled={isRunning}
               aria-label="Направление остатка от деления"
@@ -233,7 +233,7 @@ export function MachineInspector({
                   altDir: Number(e.target.value) as HexDir,
                 })
               }
-              className="px-2 py-1 rounded-lg border border-[#141e1a] bg-white font-semibold text-xs cursor-pointer"
+              className="px-2 py-1 rounded-lg border border-[#141e1a] dark:border-slate-600 bg-white dark:bg-slate-800 text-[#141e1a] dark:text-slate-100 font-semibold text-xs cursor-pointer"
             >
               {([0, 1, 2, 3, 4, 5] as HexDir[]).map((d) => (
                 <option key={d} value={d}>
@@ -249,7 +249,7 @@ export function MachineInspector({
       {block.type === 'dup' && (
         <div className="flex flex-col gap-2 text-xs">
           <label className="flex items-center justify-between gap-2">
-            <span className="font-semibold text-slate-600">Порт копии:</span>
+            <span className="font-semibold text-slate-600 dark:text-slate-300">Порт копии:</span>
             <select
               disabled={isRunning}
               aria-label="Направление копии дубликатора"
@@ -259,7 +259,7 @@ export function MachineInspector({
                   altDir: Number(e.target.value) as HexDir,
                 })
               }
-              className="px-2 py-1 rounded-lg border border-[#141e1a] bg-white font-semibold text-xs cursor-pointer"
+              className="px-2 py-1 rounded-lg border border-[#141e1a] dark:border-slate-600 bg-white dark:bg-slate-800 text-[#141e1a] dark:text-slate-100 font-semibold text-xs cursor-pointer"
             >
               {([0, 1, 2, 3, 4, 5] as HexDir[]).map((d) => (
                 <option key={d} value={d}>
@@ -268,7 +268,7 @@ export function MachineInspector({
               ))}
             </select>
           </label>
-          <p className="text-[11px] text-slate-500 leading-snug">
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
             Оригинал выходит по основной стрелке, точная копия — в выбранный порт.
           </p>
         </div>
@@ -278,7 +278,7 @@ export function MachineInspector({
       {block.type === 'splitter' && (
         <div className="flex flex-col gap-2 text-xs">
           <label className="flex items-center justify-between gap-2">
-            <span className="font-semibold text-slate-600">Порт B (черед.):</span>
+            <span className="font-semibold text-slate-600 dark:text-slate-300">Порт B (черед.):</span>
             <select
               disabled={isRunning}
               aria-label="Запасной выход разделителя"
@@ -288,7 +288,7 @@ export function MachineInspector({
                   altDir: Number(e.target.value) as HexDir,
                 })
               }
-              className="px-2 py-1 rounded-lg border border-[#141e1a] bg-white font-semibold text-xs cursor-pointer"
+              className="px-2 py-1 rounded-lg border border-[#141e1a] dark:border-slate-600 bg-white dark:bg-slate-800 text-[#141e1a] dark:text-slate-100 font-semibold text-xs cursor-pointer"
             >
               {([0, 1, 2, 3, 4, 5] as HexDir[]).map((d) => (
                 <option key={d} value={d}>
@@ -297,7 +297,7 @@ export function MachineInspector({
               ))}
             </select>
           </label>
-          <p className="text-[11px] text-slate-500 leading-snug">
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
             Поочерёдно отправляет сферы: сначала по основной стрелке (A), затем в порт B.
           </p>
         </div>
@@ -307,7 +307,7 @@ export function MachineInspector({
       {block.type === 'halver' && (
         <div className="flex flex-col gap-2 text-xs">
           <label className="flex items-center justify-between gap-2">
-            <span className="font-semibold text-slate-600">Вторая половина:</span>
+            <span className="font-semibold text-slate-600 dark:text-slate-300">Вторая половина:</span>
             <select
               disabled={isRunning}
               aria-label="Порт второй половины раскольника"
@@ -317,7 +317,7 @@ export function MachineInspector({
                   altDir: Number(e.target.value) as HexDir,
                 })
               }
-              className="px-2 py-1 rounded-lg border border-[#141e1a] bg-white font-semibold text-xs cursor-pointer"
+              className="px-2 py-1 rounded-lg border border-[#141e1a] dark:border-slate-600 bg-white dark:bg-slate-800 text-[#141e1a] dark:text-slate-100 font-semibold text-xs cursor-pointer"
             >
               {([0, 1, 2, 3, 4, 5] as HexDir[]).map((d) => (
                 <option key={d} value={d}>
@@ -326,7 +326,7 @@ export function MachineInspector({
               ))}
             </select>
           </label>
-          <p className="text-[11px] text-slate-500 leading-snug">
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
             Раскалывает чётную одиночную сферу a на две равные (a/2 и a/2). Нечётные и полимеры останавливают линию.
           </p>
         </div>
@@ -336,7 +336,7 @@ export function MachineInspector({
       {block.type === 'scales' && (
         <div className="flex flex-col gap-2 text-xs">
           <label className="flex items-center justify-between gap-2">
-            <span className="font-semibold text-slate-600">Порт меньшего (min):</span>
+            <span className="font-semibold text-slate-600 dark:text-slate-300">Порт меньшего (min):</span>
             <select
               disabled={isRunning}
               aria-label="Порт меньшего числа весов"
@@ -346,7 +346,7 @@ export function MachineInspector({
                   altDir: Number(e.target.value) as HexDir,
                 })
               }
-              className="px-2 py-1 rounded-lg border border-[#141e1a] bg-white font-semibold text-xs cursor-pointer"
+              className="px-2 py-1 rounded-lg border border-[#141e1a] dark:border-slate-600 bg-white dark:bg-slate-800 text-[#141e1a] dark:text-slate-100 font-semibold text-xs cursor-pointer"
             >
               {([0, 1, 2, 3, 4, 5] as HexDir[]).map((d) => (
                 <option key={d} value={d}>
@@ -355,7 +355,7 @@ export function MachineInspector({
               ))}
             </select>
           </label>
-          <p className="text-[11px] text-slate-500 leading-snug">
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
             Сравнивает два числа: большее (max) идёт по основной стрелке, меньшее (min) — в боковой порт. Равные числа вызывают ошибку.
           </p>
         </div>
@@ -363,14 +363,14 @@ export function MachineInspector({
 
       {/* Swapper Hint */}
       {block.type === 'swapper' && (
-        <p className="text-[11px] text-slate-500 leading-snug">
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
           Разворачивает платформу на 180° и меняет местами сферы спереди (по стрелке) и сзади (с противоположной стороны).
         </p>
       )}
 
       {/* Jumper Hint */}
       {block.type === 'jumper' && (
-        <p className="text-[11px] text-slate-500 leading-snug">
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
           Перебрасывает одиночную сферу на 2 гекса вперёд по стрелке через препятствие, разлом или другую линию. Полимеры не перепрыгивают.
         </p>
       )}
@@ -379,18 +379,18 @@ export function MachineInspector({
       {block.type === 'spawner' && (
         <div className="flex flex-col gap-2 text-xs">
           <label className="flex flex-col gap-1">
-            <span className="font-semibold text-slate-600">Последовательность:</span>
+            <span className="font-semibold text-slate-600 dark:text-slate-300">Последовательность:</span>
             <input
               type="text"
               disabled={isRunning}
               aria-label="Последовательность чисел источника"
               value={seqText}
               onChange={(e) => applySequenceText(e.target.value)}
-              className="px-2 py-1 rounded-lg border border-[#141e1a] bg-white font-mono-tabular text-xs"
+              className="px-2 py-1 rounded-lg border border-[#141e1a] dark:border-slate-600 bg-white dark:bg-slate-900 text-[#141e1a] dark:text-slate-100 font-mono-tabular text-xs"
             />
           </label>
           <div className="flex items-center justify-between gap-2">
-            <span className="font-semibold text-slate-600">Интервал (такты):</span>
+            <span className="font-semibold text-slate-600 dark:text-slate-300">Интервал (такты):</span>
             <div className="flex items-center gap-1">
               <button
                 type="button"
@@ -401,7 +401,7 @@ export function MachineInspector({
                     spawnInterval: Math.max(1, (block.config.spawnInterval ?? 2) - 1),
                   })
                 }
-                className="cel-btn w-6 h-6 rounded bg-white font-bold cursor-pointer"
+                className="hud-btn w-6 h-6 rounded bg-white dark:bg-slate-800 font-bold cursor-pointer"
               >
                 −
               </button>
@@ -417,7 +417,7 @@ export function MachineInspector({
                     spawnInterval: Math.min(12, (block.config.spawnInterval ?? 2) + 1),
                   })
                 }
-                className="cel-btn w-6 h-6 rounded bg-white font-bold cursor-pointer"
+                className="hud-btn w-6 h-6 rounded bg-white dark:bg-slate-800 font-bold cursor-pointer"
               >
                 +
               </button>
@@ -432,7 +432,7 @@ export function MachineInspector({
                 onUpdateConfig(block.coord, { loopSequence: e.target.checked })
               }
             />
-            <span className="font-semibold text-slate-700">Зациклить поток</span>
+            <span className="font-semibold text-slate-700 dark:text-slate-300">Зациклить поток</span>
           </label>
         </div>
       )}
@@ -442,7 +442,7 @@ export function MachineInspector({
         disabled={isRunning}
         onClick={() => onDelete(block.coord)}
         aria-label="Удалить выбранный механизм"
-        className="cel-btn w-full py-1.5 rounded-xl bg-red-50 text-red-700 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer mt-1"
+        className="hud-btn w-full py-1.5 rounded-xl bg-red-50 dark:bg-rose-950/60 text-red-700 dark:text-rose-300 dark:border-rose-500/40 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer mt-1"
       >
         <Trash2 className="w-3.5 h-3.5" />
         <span>Удалить блок</span>

@@ -22,6 +22,7 @@ import type {
   MachineInstance,
   MachineType,
   RotatorMode,
+  SimEvent,
   SimulationWorld,
 } from '../engine/types';
 import {
@@ -32,6 +33,7 @@ import {
   PALETTES,
   type PaletteThemeId,
 } from './celMaterials';
+import type { Vec2 } from './conveyorTopology';
 import {
   buildBondRodMesh,
   buildBonsaiTreeGroup,
@@ -48,6 +50,13 @@ import {
   getSharedHexHitGeometry,
   getSharedHexTileGeometry,
 } from './proceduralMeshes';
+import {
+  evaluateConsumedTokenTimeline,
+  evaluateMachineActionCurves,
+  evaluateTokenTickTimeline,
+  TOKEN_ARRIVAL_ALPHA,
+  TOKEN_TRIGGER_ALPHA,
+} from './tokenAnimationTimeline';
 
 export interface HexSceneProps {
   world: SimulationWorld;
@@ -226,6 +235,9 @@ export function HexScene3D({
     spawnPulseRing: (x: number, z: number, colorHex: number, maxScale?: number, delay?: number) => void;
     spawnOpPopup: (x: number, z: number, label: string, severity: 'info' | 'success' | 'warning' | 'error') => void;
     addTrauma: (amount: number) => void;
+    emitEventFx: (ev: SimEvent) => void;
+    queueEventFx: (ev: SimEvent) => void;
+    clearPendingEventFx: () => void;
   } | null>(null);
 
   // Sync grid when platform hex set or narrow gap fissure set changes
@@ -269,46 +281,32 @@ export function HexScene3D({
   useEffect(() => {
     if (world.tick === 0 || world.events.length === 0) {
       lastEventIdRef.current = 0;
+      sceneApiRef.current?.clearPendingEventFx();
       return;
     }
     const maxEvId = world.events[world.events.length - 1].id;
     // Handle step-back / rewind safely
     if (maxEvId < lastEventIdRef.current) {
       lastEventIdRef.current = maxEvId;
+      sceneApiRef.current?.clearPendingEventFx();
       return;
     }
     const newEvents = world.events.filter((ev) => ev.id > lastEventIdRef.current);
     lastEventIdRef.current = maxEvId;
+    const isAnimatedPlayback =
+      (propsRef.current.isSimPlaying || propsRef.current.isTitleMode) &&
+      tickProgressRef.current < TOKEN_TRIGGER_ALPHA;
+
     for (const ev of newEvents) {
-      const w = hexToWorld(ev.coord);
-      if (ev.type === 'deliver' || ev.type === 'weld' || ev.type === 'spawn' || ev.type === 'cut') {
-        const burstCount = ev.type === 'deliver' ? 8 : ev.type === 'cut' ? 4 : 3;
-        sceneApiRef.current?.spawnSteamBurst(w.x, w.z, burstCount);
-      }
-      if (ev.type === 'weld' || ev.type === 'cut' || ev.type === 'transform' || ev.type === 'destroy') {
-        sceneApiRef.current?.spawnSparkBurst(w.x, w.z, ev.type === 'transform' ? 4 : 8);
-      }
-      if (ev.type === 'deliver') {
-        sceneApiRef.current?.spawnPulseRing(w.x, w.z, 0x26b557, 1.9);
-        sceneApiRef.current?.addTrauma(0.16);
-      } else if (ev.type === 'weld') {
-        sceneApiRef.current?.spawnPulseRing(w.x, w.z, 0xfbbf24, 1.65);
-        sceneApiRef.current?.addTrauma(0.14);
-      } else if (ev.type === 'cut') {
-        sceneApiRef.current?.spawnPulseRing(w.x, w.z, 0x38bdf8, 1.65);
-        sceneApiRef.current?.addTrauma(0.14);
-      } else if (ev.type === 'destroy') {
-        sceneApiRef.current?.spawnPulseRing(w.x, w.z, 0xf97316, 1.75);
-        sceneApiRef.current?.addTrauma(0.14);
-      } else if (ev.type === 'transform' || ev.type === 'store') {
-        sceneApiRef.current?.spawnPulseRing(w.x, w.z, 0xfde047, 1.45);
-      } else if (ev.type === 'collision' || ev.type === 'error') {
-        sceneApiRef.current?.spawnPulseRing(w.x, w.z, 0xff3b30, 1.95, 0);
-        sceneApiRef.current?.spawnPulseRing(w.x, w.z, 0xff3b30, 2.25, 0.11);
-        sceneApiRef.current?.addTrauma(0.55);
-      }
-      if (ev.badge && !propsRef.current.isTitleMode) {
-        sceneApiRef.current?.spawnOpPopup(w.x, w.z, ev.badge, ev.severity);
+      const immediate =
+        ev.type === 'spawn' ||
+        ev.type === 'collision' ||
+        ev.type === 'error' ||
+        !isAnimatedPlayback;
+      if (immediate) {
+        sceneApiRef.current?.emitEventFx(ev);
+      } else {
+        sceneApiRef.current?.queueEventFx(ev);
       }
     }
   }, [world.events, world.tick]);
@@ -347,6 +345,7 @@ export function HexScene3D({
     const renderer = new THREE.WebGLRenderer({
       antialias: !isSoftwareGl,
       powerPreference: 'high-performance',
+      preserveDrawingBuffer: isSoftwareGl,
     });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -676,13 +675,13 @@ export function HexScene3D({
       opCursor = (opCursor + 1) % opPopups.length;
       pop.active = true;
       pop.life = 0;
-      pop.maxLife = 0.62;
-      pop.startY = 0.74;
+      pop.maxLife = 0.72;
+      pop.startY = 0.96;
       pop.mat.map = getOpBadgeTexture(label, severity);
       pop.mat.opacity = 1;
       pop.mat.needsUpdate = true;
       pop.sprite.position.set(x, pop.startY, z);
-      pop.sprite.scale.set(1.22, 0.5, 1);
+      pop.sprite.scale.set(1.34, 0.55, 1);
       pop.sprite.visible = true;
     }
 
@@ -832,6 +831,13 @@ export function HexScene3D({
       string,
       { group: THREE.Group; value: number; theme: PaletteThemeId; popAge: number }
     >();
+    const consumedVisuals = new Map<
+      string,
+      { group: THREE.Group; value: number; theme: PaletteThemeId }
+    >();
+    const pendingVfxEvents: SimEvent[] = [];
+    let prevUpdateTick = -1;
+    let prevUpdateAlpha = 1;
     const fallingVisuals: Array<{
       group: THREE.Group;
       vx: number;
@@ -1185,7 +1191,7 @@ export function HexScene3D({
         if (prevMachineIds.size > 0 && prevMachineIds.get(k) !== sig) {
           machineDropAge.set(k, 0);
         }
-        const mesh = buildMachineMesh(machine, pal, maxAniso);
+        const mesh = buildMachineMesh(machine, pal, maxAniso, propsRef.current.world.machines);
         const w = hexToWorld(machine.coord);
         mesh.position.set(w.x, 0, w.z);
         machineGroup.add(mesh);
@@ -1694,6 +1700,42 @@ export function HexScene3D({
       autoFrameActive = true;
     }
 
+    function emitEventFx(ev: SimEvent) {
+      const w = hexToWorld(ev.coord);
+      if (ev.type === 'deliver' || ev.type === 'weld' || ev.type === 'spawn' || ev.type === 'cut') {
+        const burstCount = ev.type === 'deliver' ? 8 : ev.type === 'cut' ? 4 : 3;
+        spawnSteamBurst(w.x, w.z, burstCount);
+      }
+      if (ev.type === 'weld' || ev.type === 'cut' || ev.type === 'transform' || ev.type === 'destroy') {
+        spawnSparkBurst(w.x, w.z, ev.type === 'transform' ? 6 : 9);
+      }
+      if (ev.type === 'deliver') {
+        spawnPulseRing(w.x, w.z, 0x26b557, 1.95);
+        addTrauma(0.16);
+      } else if (ev.type === 'weld') {
+        spawnPulseRing(w.x, w.z, 0xfbbf24, 1.7);
+        addTrauma(0.14);
+      } else if (ev.type === 'cut') {
+        spawnPulseRing(w.x, w.z, 0x38bdf8, 1.7);
+        addTrauma(0.14);
+      } else if (ev.type === 'destroy') {
+        spawnPulseRing(w.x, w.z, 0xf97316, 1.75);
+        addTrauma(0.14);
+      } else if (ev.type === 'transform') {
+        spawnPulseRing(w.x, w.z, 0xfde047, 1.82, 0);
+        spawnPulseRing(w.x, w.z, 0xffffff, 1.35, 0.05);
+      } else if (ev.type === 'store') {
+        spawnPulseRing(w.x, w.z, 0xfde047, 1.55);
+      } else if (ev.type === 'collision' || ev.type === 'error') {
+        spawnPulseRing(w.x, w.z, 0xff3b30, 1.95, 0);
+        spawnPulseRing(w.x, w.z, 0xff3b30, 2.25, 0.11);
+        addTrauma(0.55);
+      }
+      if (ev.badge && !propsRef.current.isTitleMode) {
+        spawnOpPopup(w.x, w.z, ev.badge, ev.severity);
+      }
+    }
+
     sceneApiRef.current = {
       rebuildGrid,
       syncMachines,
@@ -1707,6 +1749,13 @@ export function HexScene3D({
       spawnPulseRing,
       spawnOpPopup,
       addTrauma,
+      emitEventFx,
+      queueEventFx: (ev: SimEvent) => {
+        pendingVfxEvents.push(ev);
+      },
+      clearPendingEventFx: () => {
+        pendingVfxEvents.length = 0;
+      },
     };
 
     // Main Render Loop (GPU rAF vs Software WebGL afterDraw)
@@ -1735,12 +1784,55 @@ export function HexScene3D({
       frameId = window.setTimeout(poll, 5);
     }
 
+    function applyTokenGlow(group: THREE.Group, hexColor: number, intensity: number) {
+      const bodyMat = group.userData.bodyMat as THREE.MeshStandardMaterial | undefined;
+      const rimMat = group.userData.rimMat as THREE.MeshStandardMaterial | undefined;
+      if (bodyMat) {
+        if (intensity > 0.005) {
+          bodyMat.emissive.setHex(hexColor);
+          bodyMat.emissiveIntensity = intensity;
+        } else if (bodyMat.emissiveIntensity !== 0) {
+          bodyMat.emissiveIntensity = 0;
+        }
+      }
+      if (rimMat) {
+        if (intensity > 0.005) {
+          rimMat.emissive.setHex(0xffffff);
+          rimMat.emissiveIntensity = intensity * 1.15;
+        } else if (rimMat.emissiveIntensity !== 0) {
+          rimMat.emissiveIntensity = 0;
+        }
+      }
+    }
+
     function updateTokensAndBonds(elapsed: number, dt: number) {
       const { world: wSnap, theme: tId } = propsRef.current;
       const pal = PALETTES[tId];
-      const alpha = THREE.MathUtils.clamp(tickProgressRef.current, 0, 1);
-      // Smooth cubic ease for tactile mechanical glide
-      const ease = alpha < 0.5 ? 4 * alpha * alpha * alpha : 1 - Math.pow(-2 * alpha + 2, 3) / 2;
+      const rawAlpha = THREE.MathUtils.clamp(tickProgressRef.current, 0, 1);
+
+      // Tear-free guard: if rAF tick reset alpha -> 0 before React committed next world.tick, hold at 1.0
+      let alpha = rawAlpha;
+      if (wSnap.tick === prevUpdateTick && rawAlpha < prevUpdateAlpha - 0.5) {
+        alpha = 1;
+      } else {
+        prevUpdateTick = wSnap.tick;
+        prevUpdateAlpha = rawAlpha;
+      }
+
+      // Flush queued machine VFX (popups, sparks, rings) right at TOKEN_TRIGGER_ALPHA
+      if (pendingVfxEvents.length > 0 && alpha >= TOKEN_TRIGGER_ALPHA) {
+        for (let i = pendingVfxEvents.length - 1; i >= 0; i--) {
+          const ev = pendingVfxEvents[i];
+          if (ev.tick <= wSnap.tick) {
+            emitEventFx(ev);
+            pendingVfxEvents.splice(i, 1);
+          }
+        }
+      }
+
+      // Smooth cubic ease over travel phase [0..TOKEN_ARRIVAL_ALPHA] for rotator/swapper synchronization
+      const moveNorm = alpha >= TOKEN_ARRIVAL_ALPHA ? 1 : THREE.MathUtils.clamp(alpha / TOKEN_ARRIVAL_ALPHA, 0, 1);
+      const moveEase = moveNorm < 0.5 ? 4 * moveNorm * moveNorm * moveNorm : 1 - Math.pow(-2 * moveNorm + 2, 3) / 2;
 
       // Remove stale token visuals & dispose GPU resources
       for (const [id, vis] of tokenVisuals.entries()) {
@@ -1751,39 +1843,69 @@ export function HexScene3D({
         }
       }
 
-      // Position tokens with per-moveSource physical motion curves & elastic squash-stretch
+      // Position tokens with 3-phase choreography: Travel [0..0.42] -> Dwell [0.42..0.56] -> Trigger & Accent [0.56..1.0]
       const tokenRenderPositions = new Map<string, { x: number; y: number; z: number }>();
       for (const tok of wSnap.tokens.values()) {
+        const isMoving =
+          Boolean(tok.rotatedFrom) ||
+          tok.prevCoord.q !== tok.coord.q ||
+          tok.prevCoord.r !== tok.coord.r;
+        const prevVal = tok.prevValue ?? tok.value;
+        const valueChanged = prevVal !== tok.value;
+        const destMachine = wSnap.machines.get(hexKey(tok.coord));
+        const machineTriggeredOnTok = Boolean(
+          destMachine &&
+            destMachine.state.activeFlashTicks > 0 &&
+            destMachine.type !== 'spawner' &&
+            destMachine.type !== 'conveyor',
+        );
+        const hasAccent = valueChanged || tok.moveSource === 'split' || machineTriggeredOnTok;
+
+        const tl = evaluateTokenTickTimeline({
+          alpha,
+          isMoving,
+          moveSource: tok.moveSource,
+          hasAccent,
+        });
+        const displayValue = tl.showTransformed ? tok.value : prevVal;
+
         let vis = tokenVisuals.get(tok.id);
-        if (!vis || vis.value !== tok.value || vis.theme !== tId) {
-          const isTransform = Boolean(vis && vis.value !== tok.value);
+        if (!vis || vis.value !== displayValue || vis.theme !== tId) {
+          const isTransformSwap = Boolean(vis && vis.value !== displayValue);
           if (vis) {
             tokenGroup.remove(vis.group);
             disposeObjectTree(vis.group);
           }
-          const group = buildTokenMesh(tok.value, pal, tId, maxAniso);
+          const group = buildTokenMesh(displayValue, pal, tId, maxAniso);
           tokenGroup.add(group);
-          vis = { group, value: tok.value, theme: tId, popAge: isTransform ? 0 : 0.35 };
+          vis = {
+            group,
+            value: displayValue,
+            theme: tId,
+            popAge: isTransformSwap || (tl.showTransformed && tok.moveSource === 'split') ? 0 : 1,
+          };
           tokenVisuals.set(tok.id, vis);
         }
-        vis.popAge = Math.min(1, vis.popAge + dt * 3.8);
+        vis.popAge = Math.min(1, vis.popAge + dt * 2.4);
+
+        if (tl.hiddenBeforeTrigger) {
+          vis.group.visible = false;
+          continue;
+        }
+        vis.group.visible = true;
 
         let wx = 0;
         let wz = 0;
         let hop = 0;
         let pitchX = 0;
         let pitchZ = 0;
+        let yawSpin = 0;
         let stretchXZ = 1;
         let stretchY = 1;
 
-        const isMoving =
-          Boolean(tok.rotatedFrom) ||
-          tok.prevCoord.q !== tok.coord.q ||
-          tok.prevCoord.r !== tok.coord.r;
-
-        if (tok.rotatedFrom && alpha < 1) {
-          const rotEase =
-            alpha < 0.5 ? 4 * alpha * alpha * alpha : 1 - Math.pow(-2 * alpha + 2, 3) / 2;
+        const mT = tl.moveT;
+        if (tok.rotatedFrom && mT < 1) {
+          const rotEase = mT < 0.5 ? 4 * mT * mT * mT : 1 - Math.pow(-2 * mT + 2, 3) / 2;
           const pW = hexToWorld(tok.rotatedFrom.pivot);
           const sW = hexToWorld(tok.prevCoord);
           const dx = sW.x - pW.x;
@@ -1794,57 +1916,52 @@ export function HexScene3D({
           wx = pW.x + (dx * cos - dz * sin);
           wz = pW.z + (dx * sin + dz * cos);
           const isSwap180 = Math.abs(tok.rotatedFrom.angleDelta) > 2;
-          hop = Math.sin(alpha * Math.PI) * (isSwap180 ? 0.34 : 0.16);
-          pitchZ = Math.sin(alpha * Math.PI) * 0.08 * Math.sign(tok.rotatedFrom.angleDelta);
+          hop = Math.sin(mT * Math.PI) * (isSwap180 ? 0.34 : 0.16);
+          pitchZ = Math.sin(mT * Math.PI) * 0.08 * Math.sign(tok.rotatedFrom.angleDelta);
         } else {
           const sW = hexToWorld(tok.prevCoord);
           const eW = hexToWorld(tok.coord);
-          if (isMoving && alpha < 1) {
+          if (isMoving && mT < 1) {
             const src = tok.moveSource ?? 'conveyor';
-            let tCurve = alpha;
+            let tCurve = mT;
             if (src === 'pusher') {
-              const p = Math.min(1, alpha / 0.38);
-              const ballistic = 1 - Math.pow(1 - p, 3);
+              const p = Math.min(1, mT / 0.58);
+              const ballistic = 1 - Math.pow(1 - p, 2.8);
               const recoil =
-                alpha > 0.38
-                  ? Math.sin((alpha - 0.38) * Math.PI * 2.2) *
-                    Math.exp(-(alpha - 0.38) * 5.2) *
-                    0.03
+                mT > 0.58
+                  ? Math.sin((mT - 0.58) * Math.PI * 2.2) * Math.exp(-(mT - 0.58) * 5.2) * 0.025
                   : 0;
               tCurve = ballistic + recoil;
-              hop = Math.sin(Math.min(1, alpha / 0.55) * Math.PI) * 0.085;
+              hop = Math.sin(Math.min(1, mT / 0.72) * Math.PI) * 0.08;
               const sq =
-                alpha < 0.38
-                  ? Math.sin((alpha / 0.38) * Math.PI) * 0.14
-                  : -Math.sin(Math.min(1, (alpha - 0.38) / 0.35) * Math.PI) * 0.08;
+                mT < 0.55
+                  ? Math.sin((mT / 0.55) * Math.PI) * 0.12
+                  : -Math.sin(Math.min(1, (mT - 0.55) / 0.45) * Math.PI) * 0.06;
               stretchXZ = 1 + sq * 0.65;
               stretchY = 1 - sq;
             } else if (src === 'jump') {
-              tCurve = 1 - Math.pow(1 - alpha, 2.05);
-              hop = Math.sin(alpha * Math.PI) * 0.72;
+              tCurve = 1 - Math.pow(1 - mT, 2.05);
+              hop = Math.sin(mT * Math.PI) * 0.72;
               const landSquash =
-                alpha > 0.85 ? Math.sin(((alpha - 0.85) / 0.15) * Math.PI) * 0.12 : 0;
+                mT > 0.85 ? Math.sin(((mT - 0.85) / 0.15) * Math.PI) * 0.12 : 0;
               stretchXZ = 1 + landSquash * 0.6;
               stretchY = 1 - landSquash;
             } else if (src === 'magnet') {
               tCurve =
-                alpha < 0.45
-                  ? 0.22 * Math.pow(alpha / 0.45, 2)
-                  : 0.22 + 0.78 * (1 - Math.pow(1 - (alpha - 0.45) / 0.55, 2.4));
-              hop = Math.sin(alpha * Math.PI) * 0.19;
+                mT < 0.45
+                  ? 0.22 * Math.pow(mT / 0.45, 2)
+                  : 0.22 + 0.78 * (1 - Math.pow(1 - (mT - 0.45) / 0.55, 2.4));
+              hop = Math.sin(mT * Math.PI) * 0.18;
             } else if (src === 'spawner') {
-              tCurve = 1 - Math.pow(1 - alpha, 2.2);
-              hop = Math.abs(Math.sin(alpha * Math.PI * 1.6)) * (1 - alpha) * 0.17;
+              tCurve = 1 - Math.pow(1 - mT, 2.2);
+              hop = Math.abs(Math.sin(mT * Math.PI * 1.4)) * (1 - mT) * 0.16;
             } else if (src === 'split') {
-              tCurve = 1 - Math.pow(1 - alpha, 2.4);
-              hop = Math.sin(alpha * Math.PI) * 0.15;
+              tCurve = mT;
+              hop = Math.sin(mT * Math.PI) * 0.2;
             } else {
               // Conveyor steady traction glide
-              tCurve =
-                alpha < 0.5
-                  ? 2 * alpha * alpha
-                  : 1 - Math.pow(-2 * alpha + 2, 2) / 2;
-              hop = Math.sin(alpha * Math.PI) * 0.022;
+              tCurve = mT < 0.5 ? 2 * mT * mT : 1 - Math.pow(-2 * mT + 2, 2) / 2;
+              hop = Math.sin(mT * Math.PI) * 0.022;
             }
             wx = THREE.MathUtils.lerp(sW.x, eW.x, tCurve);
             wz = THREE.MathUtils.lerp(sW.z, eW.z, tCurve);
@@ -1852,8 +1969,8 @@ export function HexScene3D({
             const dx = eW.x - sW.x;
             const dz = eW.z - sW.z;
             const dist = Math.hypot(dx, dz) || 1;
-            const tiltMag = src === 'pusher' ? 0.14 : 0.08;
-            const tiltEnv = Math.sin(alpha * Math.PI) * tiltMag;
+            const tiltMag = src === 'pusher' ? 0.12 : 0.07;
+            const tiltEnv = Math.sin(mT * Math.PI) * tiltMag;
             pitchX = (dz / dist) * tiltEnv;
             pitchZ = -(dx / dist) * tiltEnv;
           } else {
@@ -1862,33 +1979,138 @@ export function HexScene3D({
           }
         }
 
-        if (vis.popAge < 1) {
-          const popWave = Math.sin(vis.popAge * Math.PI * 1.5) * (1 - vis.popAge) * 0.2;
+        // Dwell anticipation: subtle mechanical lock-on squash right before the machine strikes
+        if (tl.dwellAnticipation > 0) {
+          const ant = tl.dwellAnticipation;
+          stretchXZ *= 1 + ant * 0.1;
+          stretchY *= 1 - ant * 0.12;
+        }
+
+        // Emphasized transformation pop & golden-white glow after TOKEN_TRIGGER_ALPHA
+        let glowIntensity = 0;
+        if (tl.transformAccentT > 0 && tl.transformAccentT < 1) {
+          const tt = tl.transformAccentT;
+          const amp = valueChanged ? 1.0 : 0.55;
+          hop += Math.sin(tt * Math.PI) * (valueChanged ? 0.34 : 0.18);
+          const pulse = Math.sin(tt * Math.PI * 1.4) * (1 - tt) * 0.34 * amp;
+          stretchXZ *= 1 + pulse;
+          stretchY *= 1 + Math.sin(tt * Math.PI) * 0.24 * amp - pulse * 0.35;
+          yawSpin = valueChanged ? Math.sin(tt * Math.PI) * 0.32 : 0;
+          glowIntensity = Math.pow(1 - tt, 1.35) * (valueChanged ? 1.15 : 0.65);
+        } else if (vis.popAge < 1) {
+          const popWave = Math.sin(vis.popAge * Math.PI * 1.5) * (1 - vis.popAge) * 0.22;
           stretchXZ *= 1 + popWave;
           stretchY *= 1 / Math.sqrt(Math.max(0.65, 1 + popWave));
         }
+        applyTokenGlow(vis.group, 0xffe082, glowIntensity);
 
-        const bob = Math.sin(elapsed * 2.5 + tok.spawnOrder) * 0.014;
+        const bob =
+          tl.isDwelling || tl.transformAccentT > 0
+            ? 0
+            : Math.sin(elapsed * 2.5 + tok.spawnOrder) * 0.014;
         const wy = bob + hop;
         vis.group.position.set(wx, wy, wz);
-        vis.group.rotation.set(pitchX, 0, pitchZ);
+        vis.group.rotation.set(pitchX, yawSpin, pitchZ);
         vis.group.scale.set(stretchXZ, stretchY, stretchXZ);
         tokenRenderPositions.set(tok.id, { x: wx, y: wy, z: wz });
       }
 
-      // Update rigid polymer bond rods
-      while (bondMeshes.length < wSnap.bonds.length) {
+      // Update consumed tokens (delivered to sink, stored in memory, shredded, or merged):
+      // Ride onto target [0..0.42], pause [0.42..0.56], flash & absorb [0.56..0.92]
+      const activeConsumedKeys = new Set<string>();
+      const consumedList = wSnap.consumedTokens ?? [];
+      for (const ct of consumedList) {
+        const cKey = `${wSnap.tick}:${ct.id}`;
+        activeConsumedKeys.add(cKey);
+        let cVis = consumedVisuals.get(cKey);
+        if (!cVis || cVis.value !== ct.value || cVis.theme !== tId) {
+          if (cVis) {
+            tokenGroup.remove(cVis.group);
+            disposeObjectTree(cVis.group);
+          }
+          const group = buildTokenMesh(ct.value, pal, tId, maxAniso);
+          tokenGroup.add(group);
+          cVis = { group, value: ct.value, theme: tId };
+          consumedVisuals.set(cKey, cVis);
+        }
+        const ctl = evaluateConsumedTokenTimeline(alpha);
+        if (!ctl.visible) {
+          cVis.group.visible = false;
+          continue;
+        }
+        cVis.group.visible = true;
+        let cx = 0;
+        let cz = 0;
+        let chop = 0;
+        const mT = ctl.moveT;
+        if (ct.rotatedFrom && mT < 1) {
+          const rotEase = mT < 0.5 ? 4 * mT * mT * mT : 1 - Math.pow(-2 * mT + 2, 3) / 2;
+          const pW = hexToWorld(ct.rotatedFrom.pivot);
+          const sW = hexToWorld(ct.prevCoord);
+          const dx = sW.x - pW.x;
+          const dz = sW.z - pW.z;
+          const rotAngle = -ct.rotatedFrom.angleDelta * rotEase;
+          const cos = Math.cos(rotAngle);
+          const sin = Math.sin(rotAngle);
+          cx = pW.x + (dx * cos - dz * sin);
+          cz = pW.z + (dx * sin + dz * cos);
+          chop = Math.sin(mT * Math.PI) * 0.16;
+        } else {
+          const sW = hexToWorld(ct.prevCoord);
+          const eW = hexToWorld(ct.coord);
+          if (mT < 1) {
+            const tCurve = mT < 0.5 ? 2 * mT * mT : 1 - Math.pow(-2 * mT + 2, 2) / 2;
+            cx = THREE.MathUtils.lerp(sW.x, eW.x, tCurve);
+            cz = THREE.MathUtils.lerp(sW.z, eW.z, tCurve);
+            chop = Math.sin(mT * Math.PI) * 0.025;
+          } else {
+            cx = eW.x;
+            cz = eW.z;
+          }
+        }
+        let cScaleXZ = 1;
+        let cScaleY = 1;
+        let glowHex = 0xffe082;
+        let cGlow = 0;
+        if (ctl.absorbT > 0) {
+          const ab = ctl.absorbT;
+          chop += Math.sin(ab * Math.PI) * 0.24;
+          const shrink = ab < 0.2 ? 1 + (ab / 0.2) * 0.22 : Math.max(0.02, 1.22 * (1 - (ab - 0.2) / 0.8));
+          cScaleXZ = shrink;
+          cScaleY = shrink;
+          glowHex = ct.kind === 'deliver' ? 0x4ade80 : ct.kind === 'destroy' ? 0xf97316 : 0xfbbf24;
+          cGlow = (1 - ab) * 1.25;
+        }
+        applyTokenGlow(cVis.group, glowHex, cGlow);
+        cVis.group.position.set(cx, chop, cz);
+        cVis.group.rotation.set(0, 0, 0);
+        cVis.group.scale.set(cScaleXZ, cScaleY, cScaleXZ);
+        tokenRenderPositions.set(ct.id, { x: cx, y: chop, z: cz });
+      }
+      for (const [cKey, cVis] of consumedVisuals.entries()) {
+        if (!activeConsumedKeys.has(cKey)) {
+          tokenGroup.remove(cVis.group);
+          disposeObjectTree(cVis.group);
+          consumedVisuals.delete(cKey);
+        }
+      }
+
+      // Update rigid polymer bond rods (including consumed polymers riding onto sink/shredder)
+      const consumedBonds = wSnap.consumedBonds ?? [];
+      const totalBonds = wSnap.bonds.length + consumedBonds.length;
+      while (bondMeshes.length < totalBonds) {
         const rod = buildBondRodMesh(pal);
         bondGroup.add(rod);
         bondMeshes.push(rod);
       }
       for (let i = 0; i < bondMeshes.length; i++) {
         const rod = bondMeshes[i];
-        if (i >= wSnap.bonds.length) {
+        if (i >= totalBonds) {
           rod.visible = false;
           continue;
         }
-        const edge = wSnap.bonds[i];
+        const edge =
+          i < wSnap.bonds.length ? wSnap.bonds[i] : consumedBonds[i - wSnap.bonds.length];
         const pA = tokenRenderPositions.get(edge.a);
         const pB = tokenRenderPositions.get(edge.b);
         if (!pA || !pB) {
@@ -1932,13 +2154,7 @@ export function HexScene3D({
 
         const mData = wSnap.machines.get(k);
         const isFlashing = (mData?.state.activeFlashTicks ?? 0) > 0;
-        const flashArc = isFlashing ? Math.sin(alpha * Math.PI) : 0;
-        // Snappy industrial power stroke (fast extend 0..0.35, hydraulic cushion return 0.35..1.0)
-        const stroke = isFlashing
-          ? alpha < 0.32
-            ? Math.sin((alpha / 0.32) * (Math.PI / 2))
-            : Math.cos(((alpha - 0.32) / 0.68) * (Math.PI / 2))
-          : 0;
+        const { stroke, flashArc } = evaluateMachineActionCurves(alpha, isFlashing);
 
         mGroup.traverse((child) => {
           const anim = child.userData.animType;
@@ -1959,22 +2175,62 @@ export function HexScene3D({
             const beltPhase = ((child.userData.beltPhase as number) ?? 0) + dt * (0.95 + flashArc * 0.65);
             child.userData.beltPhase = beltPhase;
             const phase = ((beltPhase + idx / count) % 1 + 1) % 1;
-            // Wraps around front & rear stadium belt drums at +/- 0.57
-            child.position.x = -0.57 + phase * 1.14;
-            if (phase < 0.13) {
+
+            const p0 = child.userData.curveP0 as Vec2 | undefined;
+            const c1 = child.userData.curveC1 as Vec2 | undefined;
+            const c2 = child.userData.curveC2 as Vec2 | undefined;
+            const p2 = child.userData.curveP2 as Vec2 | undefined;
+            if (p0 && c1 && c2 && p2) {
+              const omt = 1 - phase;
+              const omt2 = omt * omt;
+              const t2 = phase * phase;
+              const px = omt2 * omt * p0.x + 3 * omt2 * phase * c1.x + 3 * omt * t2 * c2.x + t2 * phase * p2.x;
+              const pz = omt2 * omt * p0.z + 3 * omt2 * phase * c1.z + 3 * omt * t2 * c2.z + t2 * phase * p2.z;
+              const tx =
+                3 * omt2 * (c1.x - p0.x) +
+                6 * omt * phase * (c2.x - c1.x) +
+                3 * t2 * (p2.x - c2.x);
+              const tz =
+                3 * omt2 * (c1.z - p0.z) +
+                6 * omt * phase * (c2.z - c1.z) +
+                3 * t2 * (p2.z - c2.z);
+              child.position.x = px;
+              child.position.z = pz;
+              child.rotation.order = 'YXZ';
+              child.rotation.y = Math.atan2(-tz, tx);
+            } else {
+              child.position.x = -0.57 + phase * 1.14;
+              child.position.z = 0;
+              child.rotation.y = 0;
+            }
+
+            const isOpenIn = child.userData.isOpenIn !== false;
+            const isOpenOut = child.userData.isOpenOut !== false;
+            const cs = (child.userData.chevScale as number) ?? 1;
+            if (phase < 0.13 && isOpenIn) {
               const t = phase / 0.13;
               child.position.y = 0.078 + t * 0.074;
               child.rotation.z = (1 - t) * 0.92;
-              child.scale.set(0.35 + t * 0.65, 1, 0.72 + t * 0.28);
-            } else if (phase > 0.87) {
+              child.scale.set((0.35 + t * 0.65) * cs, 1, (0.72 + t * 0.28) * cs);
+            } else if (phase < 0.1 && !isOpenIn) {
+              const t = phase / 0.1;
+              child.position.y = 0.152;
+              child.rotation.z = 0;
+              child.scale.set((0.3 + t * 0.7) * cs, 1, (0.75 + t * 0.25) * cs);
+            } else if (phase > 0.87 && isOpenOut) {
               const t = (1 - phase) / 0.13;
               child.position.y = 0.078 + t * 0.074;
               child.rotation.z = -(1 - t) * 0.92;
-              child.scale.set(0.35 + t * 0.65, 1, 0.72 + t * 0.28);
+              child.scale.set((0.35 + t * 0.65) * cs, 1, (0.72 + t * 0.28) * cs);
+            } else if (phase > 0.9 && !isOpenOut) {
+              const t = (1 - phase) / 0.1;
+              child.position.y = 0.152;
+              child.rotation.z = 0;
+              child.scale.set((0.3 + t * 0.7) * cs, 1, (0.75 + t * 0.25) * cs);
             } else {
               child.position.y = 0.152;
               child.rotation.z = 0;
-              child.scale.set(1, 1, 1);
+              child.scale.set(cs, 1, cs);
             }
           } else if (anim === 'flywheelZ') {
             const ph = ((child.userData.phase as number) ?? 0) + dt * (3.2 + flashArc * 4.5);
@@ -2024,16 +2280,16 @@ export function HexScene3D({
             child.userData.phase = ph;
             child.rotation.y = dirSign * ph;
           } else if (anim === 'rotatorArm') {
-            if (isFlashing && alpha < 1) {
+            if (isFlashing && moveNorm < 1) {
               const dirSign = child.userData.cw ? -1 : 1;
-              child.rotation.y = dirSign * (Math.PI / 3) * (1 - ease);
-              child.position.y = Math.sin(alpha * Math.PI) * 0.08;
+              child.rotation.y = dirSign * (Math.PI / 3) * (1 - moveEase);
+              child.position.y = Math.sin(moveNorm * Math.PI) * 0.08;
             } else {
               child.rotation.y = 0;
               child.position.y = 0;
             }
           } else if (anim === 'rotatorBoom') {
-            child.position.x = isFlashing ? Math.sin(alpha * Math.PI) * 0.05 : 0;
+            child.position.x = isFlashing ? stroke * 0.06 : 0;
           } else if (anim === 'rotatorClaw') {
             const side = (child.userData.side as number) ?? 1;
             const grip = isFlashing ? -0.15 : Math.sin(elapsed * 2.4) * 0.05;
@@ -2139,7 +2395,10 @@ export function HexScene3D({
           } else if (anim === 'halverWedge') {
             child.position.y = 0.56 - stroke * 0.22 + Math.sin(elapsed * 2.6) * 0.015;
           } else if (anim === 'swapperTurntable') {
-            child.rotation.y = isFlashing && alpha < 1 ? Math.PI * (1 - ease) : Math.sin(elapsed * 1.8) * 0.04;
+            child.rotation.y =
+              isFlashing && moveNorm < 1
+                ? Math.PI * (1 - moveEase)
+                : Math.sin(elapsed * 1.8) * 0.04;
           } else if (anim === 'jumperSpring') {
             child.scale.y = 1 + stroke * 0.48;
             child.position.y = 0.16 + stroke * 0.14;
@@ -2325,19 +2584,27 @@ export function HexScene3D({
           hoverRing.position.set(dw.x, 0.03, dw.z);
           hoverRing.visible = true;
 
-          const nextGhostKey = `drag:${dragged.id}:${dragged.type}:${dragActive.currentDir}:${shiftedAltDir}:${modeVal}:${tId}`;
+          const nextGhostKey =
+            dragged.type === 'conveyor'
+              ? `drag:${dragged.id}:${dragged.type}:${dropCoord.q},${dropCoord.r}:${dragActive.currentDir}:${shiftedAltDir}:${modeVal}:${tId}:${wSnap.machines.size}`
+              : `drag:${dragged.id}:${dragged.type}:${dragActive.currentDir}:${shiftedAltDir}:${modeVal}:${tId}`;
           if (ghostKey !== nextGhostKey) {
             clearGroup(ghostGroup);
             const dummyMachine: MachineInstance = {
               ...dragged,
-              coord: { q: 0, r: 0 },
+              coord: dragged.type === 'conveyor' ? dropCoord : { q: 0, r: 0 },
               config: {
                 ...dragged.config,
                 dir: dragActive.currentDir,
                 altDir: shiftedAltDir,
               },
             };
-            const preview = buildMachineMesh(dummyMachine, PALETTES[tId], maxAniso);
+            const preview = buildMachineMesh(
+              dummyMachine,
+              PALETTES[tId],
+              maxAniso,
+              dragged.type === 'conveyor' ? wSnap.machines : undefined,
+            );
             preview.traverse((obj) => {
               if ((obj as THREE.Mesh).isMesh && !obj.userData.isOutline) {
                 const mat = (obj as THREE.Mesh).material as THREE.Material;
@@ -2405,18 +2672,26 @@ export function HexScene3D({
 
         if (canPlaceTool && tool && tool !== 'erase' && tool !== 'select' && !existing?.locked) {
           const modeVal = rotMode ?? 'cw';
-          const nextGhostKey = `${tool}:${dir}:${modeVal}:${tId}`;
+          const nextGhostKey =
+            tool === 'conveyor'
+              ? `${tool}:${hoveredCoord.q},${hoveredCoord.r}:${dir}:${modeVal}:${tId}:${wSnap.machines.size}`
+              : `${tool}:${dir}:${modeVal}:${tId}`;
           if (ghostKey !== nextGhostKey) {
             clearGroup(ghostGroup);
             const dummyMachine: MachineInstance = {
               id: 'ghost',
               type: tool,
-              coord: { q: 0, r: 0 },
+              coord: tool === 'conveyor' ? hoveredCoord : { q: 0, r: 0 },
               locked: false,
               config: { dir, rotMode: modeVal, filterRule: 'even', divisor: 2 },
               state: { spawnIndex: 0, cooldown: 0, memory: null, activeFlashTicks: 0, lastActionTick: -1 },
             };
-            const preview = buildMachineMesh(dummyMachine, PALETTES[tId], maxAniso);
+            const preview = buildMachineMesh(
+              dummyMachine,
+              PALETTES[tId],
+              maxAniso,
+              tool === 'conveyor' ? wSnap.machines : undefined,
+            );
             preview.traverse((obj) => {
               if ((obj as THREE.Mesh).isMesh && !obj.userData.isOutline) {
                 const mat = (obj as THREE.Mesh).material as THREE.Material;
@@ -2659,6 +2934,9 @@ export function HexScene3D({
       window.removeEventListener('blur', onWindowBlur);
 
       clearFallingTokens();
+      tokenVisuals.clear();
+      consumedVisuals.clear();
+      pendingVfxEvents.length = 0;
       clearGroup(gridGroup);
       clearGroup(cliffGroup);
       clearGroup(sceneryGroup);

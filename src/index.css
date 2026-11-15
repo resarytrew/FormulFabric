@@ -1,10 +1,45 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
   :root {
     --font-display: 'Bricolage Grotesque', 'Plus Jakarta Sans', system-ui, sans-serif;
     --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+    /* Classic light mode tokens */
+    --hud-bg: rgba(247, 250, 248, 0.96);
+    --hud-bg-elevated: #ffffff;
+    --hud-bg-subtle: #eef5f1;
+    --hud-border: rgba(20, 30, 26, 0.24);
+    --hud-border-strong: #141e1a;
+    --hud-shadow: 0 4px 0 #141e1a;
+    --hud-text: #141e1a;
+    --hud-muted: #475569;
+    --hud-accent: #26b557;
+    --hud-tool-active: #26b557;
+    --hud-tool-active-text: #ffffff;
+    --hud-btn-bg: #ffffff;
+    --hud-btn-hover: #f0f7f3;
+    --hud-btn-shadow: 2px 2px 0 #141e1a;
+  }
+
+  html.dark {
+    /* Cities: Skylines dark obsidian glass tokens (no backdrop-filter over WebGL) */
+    --hud-bg: rgba(13, 19, 28, 0.88);
+    --hud-bg-elevated: rgba(22, 31, 44, 0.94);
+    --hud-bg-subtle: rgba(30, 42, 58, 0.86);
+    --hud-border: rgba(148, 163, 184, 0.22);
+    --hud-border-strong: rgba(148, 163, 184, 0.34);
+    --hud-shadow: 0 14px 36px rgba(2, 6, 14, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    --hud-text: #f1f5f9;
+    --hud-muted: #94a3b8;
+    --hud-accent: #10b981;
+    --hud-tool-active: #f59e0b;
+    --hud-tool-active-text: #0b111a;
+    --hud-btn-bg: rgba(26, 36, 50, 0.92);
+    --hud-btn-hover: rgba(38, 52, 71, 0.96);
+    --hud-btn-shadow: 0 2px 8px rgba(2, 6, 14, 0.35);
   }
 
   html,
@@ -16,8 +51,8 @@
     padding: 0;
     overflow: hidden;
     font-family: var(--font-sans);
-    background-color: #162721;
-    color: #141e1a;
+    background-color: #0e1621;
+    color: var(--hud-text);
     user-select: none;
     -webkit-font-smoothing: antialiased;
   }
@@ -32,50 +67,97 @@
   font-variant-numeric: tabular-nums;
 }
 
-.cel-panel {
-  background-color: #f7faf8;
-  border: 2.5px solid #141e1a;
-  box-shadow: 4px 4px 0px #141e1a;
+/* Unified dual-theme HUD container (Skylines dark obsidian vs Classic cel-panel) */
+.hud-panel {
+  background-color: var(--hud-bg);
+  border: 1.5px solid var(--hud-border-strong);
+  box-shadow: var(--hud-shadow);
+  color: var(--hud-text);
 }
 
-.cel-panel-dark {
-  background-color: rgba(20, 32, 28, 0.94);
-  border: 2.5px solid #0d1512;
-  box-shadow: 4px 4px 0px #0d1512;
-  color: #f3f7f4;
+html:not(.dark) .hud-panel {
+  border-width: 2.5px;
 }
 
-.cel-btn {
-  border: 2px solid #141e1a;
-  box-shadow: 2px 2px 0px #141e1a;
-  transition: transform 120ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 120ms cubic-bezier(0.16, 1, 0.3, 1), background-color 120ms ease;
+.hud-subcard {
+  background-color: var(--hud-bg-subtle);
+  border: 1px solid var(--hud-border);
+  color: var(--hud-text);
 }
 
-.cel-btn:hover:not(:disabled) {
-  transform: translate(-1px, -1px);
-  box-shadow: 3px 3px 0px #141e1a;
+.hud-btn {
+  border: 1px solid var(--hud-border-strong);
+  box-shadow: var(--hud-btn-shadow);
+  transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 140ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 140ms ease,
+    border-color 140ms ease;
 }
 
-.cel-btn:active:not(:disabled) {
-  transform: translate(1px, 1px);
-  box-shadow: 1px 1px 0px #141e1a;
+html:not(.dark) .hud-btn {
+  border-width: 2px;
 }
 
-.cel-btn:disabled {
-  opacity: 0.45;
+.hud-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.hud-btn:active:not(:disabled) {
+  transform: translateY(0px) scale(0.98);
+}
+
+.hud-btn:disabled {
+  opacity: 0.42;
   cursor: not-allowed;
 }
 
-/* Custom subtle scrollbars for drawers */
+/* Legacy aliases kept safe for any remaining references */
+.cel-panel {
+  background-color: var(--hud-bg);
+  border: 1.5px solid var(--hud-border-strong);
+  box-shadow: var(--hud-shadow);
+  color: var(--hud-text);
+}
+
+html:not(.dark) .cel-panel {
+  border-width: 2.5px;
+}
+
+.cel-btn {
+  border: 1px solid var(--hud-border-strong);
+  box-shadow: var(--hud-btn-shadow);
+  transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 140ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 140ms ease;
+}
+
+html:not(.dark) .cel-btn {
+  border-width: 2px;
+}
+
+.cel-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.cel-btn:active:not(:disabled) {
+  transform: translateY(0px) scale(0.98);
+}
+
+.cel-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+/* Custom subtle scrollbars */
 .cel-scroll::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 .cel-scroll::-webkit-scrollbar-track {
-  background: rgba(20, 30, 26, 0.08);
+  background: rgba(148, 163, 184, 0.1);
 }
 .cel-scroll::-webkit-scrollbar-thumb {
-  background: rgba(20, 30, 26, 0.35);
+  background: rgba(148, 163, 184, 0.35);
   border-radius: 3px;
 }
 

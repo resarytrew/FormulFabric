@@ -392,54 +392,72 @@ test('all Campaign + Eureka + Impossible + Grade5 demo solutions pass simulation
     assert.ok(level.demoSolution && level.demoSolution.length > 0, `Level ${level.id} missing demoSolution`);
     assert.ok(level.hints && level.hints.length === 3, `Level ${level.id} must have 3 progressive hints`);
 
-    if (level.maxTotalBlocks !== undefined) {
-      assert.ok(
-        level.demoSolution.length <= level.maxTotalBlocks,
-        `Level ${level.id} demoSolution (${level.demoSolution.length}) exceeds maxTotalBlocks (${level.maxTotalBlocks})`,
-      );
-    }
-    if (level.partLimits) {
-      const counts: Partial<Record<MachineType, number>> = {};
-      for (const b of level.demoSolution) {
-        counts[b.type] = (counts[b.type] ?? 0) + 1;
-      }
-      for (const [mType, limit] of Object.entries(level.partLimits)) {
-        const used = counts[mType as MachineType] ?? 0;
+    const solutionsToCheck: Array<{
+      name: string;
+      blocks: NonNullable<typeof level.demoSolution>;
+    }> = [
+      { name: 'Эталон 1 (demoSolution)', blocks: level.demoSolution },
+      ...(level.altDemoSolutions ?? []).map((alt, idx) => ({
+        name: `Эталон ${idx + 2} (${alt.label})`,
+        blocks: alt.blocks,
+      })),
+    ];
+
+    for (const sol of solutionsToCheck) {
+      assert.ok(sol.blocks.length > 0, `Level ${level.id} ${sol.name} must not be empty`);
+      if (level.maxTotalBlocks !== undefined) {
         assert.ok(
-          used <= (limit ?? Infinity),
-          `Level ${level.id} demoSolution uses ${used} of ${mType}, limit is ${limit}`,
+          sol.blocks.length <= level.maxTotalBlocks,
+          `Level ${level.id} ${sol.name} (${sol.blocks.length}) exceeds maxTotalBlocks (${level.maxTotalBlocks})`,
         );
       }
-    }
+      if (level.partLimits) {
+        const counts: Partial<Record<MachineType, number>> = {};
+        for (const b of sol.blocks) {
+          counts[b.type] = (counts[b.type] ?? 0) + 1;
+        }
+        for (const [mType, limit] of Object.entries(level.partLimits)) {
+          const used = counts[mType as MachineType] ?? 0;
+          assert.ok(
+            used <= (limit ?? Infinity),
+            `Level ${level.id} ${sol.name} uses ${used} of ${mType}, limit is ${limit}`,
+          );
+        }
+      }
 
-    const world = createWorldFromLevel(level, level.demoSolution);
-    const { check } = runUntilComplete(world, 180);
-    assert.equal(
-      check.passed,
-      true,
-      `Level ${level.id} (${level.title}) failed demoSolution: ${check.reason}`,
-    );
-    const area = computeWorldArea(world);
-    assert.ok(area >= level.demoSolution.length, `Area ${area} must cover placed blocks`);
+      const world = createWorldFromLevel(level, sol.blocks);
+      const { check } = runUntilComplete(world, 180);
+      assert.equal(
+        check.passed,
+        true,
+        `Level ${level.id} (${level.title}) failed ${sol.name}: ${check.reason}`,
+      );
+      const area = computeWorldArea(world);
+      assert.ok(area >= sol.blocks.length, `Area ${area} must cover placed blocks`);
 
-    if (level.verificationRuns) {
-      for (const vr of level.verificationRuns) {
-        const vw = createWorldFromLevel(
-          level,
-          level.demoSolution,
-          vr.spawnerOverrides,
-          vr.expectedSinkValues,
-          vr.expectedSinkPolymers,
-        );
-        const vRes = runUntilComplete(vw, 180);
+      if (level.verificationRuns) {
+        for (const vr of level.verificationRuns) {
+          const vw = createWorldFromLevel(
+            level,
+            sol.blocks,
+            vr.spawnerOverrides,
+            vr.expectedSinkValues,
+            vr.expectedSinkPolymers,
+          );
+          const vRes = runUntilComplete(vw, 180);
+          assert.equal(
+            vRes.check.passed,
+            true,
+            `Level ${level.id} ${sol.name} verificationRun "${vr.name}" failed: ${vRes.check.reason}`,
+          );
+        }
+        const report = verifyLevelSolution(level, sol.blocks, 180);
         assert.equal(
-          vRes.check.passed,
-          true,
-          `Level ${level.id} verificationRun "${vr.name}" failed: ${vRes.check.reason}`,
+          report.passed,
+          report.total,
+          `Level ${level.id} ${sol.name} verifyLevelSolution did not pass all runs`,
         );
       }
-      const report = verifyLevelSolution(level, level.demoSolution, 180);
-      assert.equal(report.passed, report.total, `Level ${level.id} verifyLevelSolution did not pass all runs`);
     }
   }
 });

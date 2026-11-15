@@ -11,10 +11,9 @@ import { GoalCard } from './components/GoalCard';
 import { HintsDrawer } from './components/HintsDrawer';
 import { MachineInspector } from './components/MachineInspector';
 import { OnboardingOverlay } from './components/OnboardingOverlay';
-import { OptimizationCard } from './components/OptimizationCard';
 import { OutcomeModal } from './components/OutcomeModal';
 import { TitleScreen } from './components/TitleScreen';
-import { TopHud } from './components/TopHud';
+import { TopHud, type UiStyleMode } from './components/TopHud';
 import {
   MAX_SIMULATION_TICKS,
   cloneWorld,
@@ -42,6 +41,9 @@ import type {
 } from './engine/types';
 import type { PaletteThemeId } from './render/celMaterials';
 import { HexScene3D } from './render/HexScene3D';
+import { TOKEN_TRIGGER_ALPHA } from './render/tokenAnimationTimeline';
+
+const BASE_SIM_TICK_MS = 1050;
 
 type AppState = 'title' | 'playing' | 'paused' | 'gameover';
 
@@ -70,8 +72,18 @@ type LevelVariantsMap = Record<string, Partial<Record<VariantSlotId, StoredVaria
 const PROGRESS_STORAGE_KEY = 'fabrika_chisel_progress_v1';
 const VARIANTS_STORAGE_KEY = 'fabrika_chisel_variants_v1';
 const HINTS_STORAGE_KEY = 'fabrika_chisel_hints_v1';
+const UI_STYLE_STORAGE_KEY = 'fabrika_chisel_ui_style_v1';
 const MAX_EDIT_HISTORY = 50;
 const MAX_TICK_HISTORY = 80;
+
+function loadSavedUiStyle(): UiStyleMode {
+  try {
+    const raw = localStorage.getItem(UI_STYLE_STORAGE_KEY);
+    return raw === 'classic' ? 'classic' : 'skyline';
+  } catch {
+    return 'skyline';
+  }
+}
 
 function loadSavedProgress(): Record<string, LevelProgressRecord> {
   try {
@@ -135,6 +147,7 @@ export default function App() {
 
   const [appState, setAppState] = useState<AppState>(autostart ? 'playing' : 'title');
   const [theme, setTheme] = useState<PaletteThemeId>('workshop');
+  const [uiStyle, setUiStyle] = useState<UiStyleMode>(() => loadSavedUiStyle());
   const [progress, setProgress] = useState<Record<string, LevelProgressRecord>>(() =>
     loadSavedProgress(),
   );
@@ -172,6 +185,7 @@ export default function App() {
   const [rotatorMode, setRotatorMode] = useState<RotatorMode>('cw');
   const [sandboxSeqInput, setSandboxSeqInput] = useState<string>('1, 2, 3, 4');
   const [dockCollapsed, setDockCollapsed] = useState<boolean>(false);
+  const [briefingExpanded, setBriefingExpanded] = useState<boolean>(false);
   const [levelsModalOpen, setLevelsModalOpen] = useState<boolean>(false);
   const [hintsDrawerOpen, setHintsDrawerOpen] = useState<boolean>(false);
   const [helpOpen, setHelpOpen] = useState<boolean>(false);
@@ -188,10 +202,13 @@ export default function App() {
   const tickProgressRef = useRef<number>(1);
   const tickHistoryRef = useRef<SimulationWorld[]>([]);
   const warningTimerRef = useRef<number | null>(null);
+  const pendingSoundTimerRef = useRef<number | null>(null);
   const worldRef = useRef<SimulationWorld>(world);
   worldRef.current = world;
   const hintsRevealedRef = useRef(hintsRevealedByLevel);
   hintsRevealedRef.current = hintsRevealedByLevel;
+  const simSpeedRef = useRef<1 | 2 | 4>(simSpeed);
+  simSpeedRef.current = simSpeed;
 
   const currentLevel: LevelDefinition = useMemo(() => {
     if (currentLevelId === 'sandbox') return SANDBOX_LEVEL;
@@ -212,6 +229,20 @@ export default function App() {
     document.body.dataset.state = appState;
   }, [appState]);
 
+  // Sync Tailwind v4 .dark class & persist UI style ('skyline' vs 'classic')
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', uiStyle === 'skyline');
+    try {
+      localStorage.setItem(UI_STYLE_STORAGE_KEY, uiStyle);
+    } catch {
+      // ignore storage errors
+    }
+  }, [uiStyle]);
+
+  const handleToggleUiStyle = useCallback(() => {
+    setUiStyle((prev) => (prev === 'skyline' ? 'classic' : 'skyline'));
+  }, []);
+
   const showBudgetWarning = useCallback((msg: string) => {
     setBudgetWarning(msg);
     if (warningTimerRef.current !== null) {
@@ -225,6 +256,10 @@ export default function App() {
 
   const rebuildWorld = useCallback(
     (lvl: LevelDefinition, blocks: PlacedBlock[]) => {
+      if (pendingSoundTimerRef.current !== null) {
+        window.clearTimeout(pendingSoundTimerRef.current);
+        pendingSoundTimerRef.current = null;
+      }
       tickProgressRef.current = 1;
       tickHistoryRef.current = [];
       setTickHistoryCount(0);
@@ -409,28 +444,52 @@ export default function App() {
         saveVariants(updatedVars);
         return updatedVars;
       });
-    } else if (nextWorld.status === 'error') {
-      sound.playError();
-      setIsSimPlaying(false);
-    } else if (isSingleStep) {
-      sound.playStep();
-    } else if (latest?.type === 'deliver') {
-      sound.playDeliver();
-    } else if (latest?.type === 'weld') {
-      sound.playWeld();
-    } else if (latest?.type === 'destroy') {
-      sound.playDestroy();
-    } else if (latest?.type === 'transform') {
-      sound.playTransform();
     } else {
-      sound.playStep();
+      if (pendingSoundTimerRef.current !== null) {
+        window.clearTimeout(pendingSoundTimerRef.current);
+        pendingSoundTimerRef.current = null;
+      }
+
+      if (nextWorld.status === 'error') {
+        sound.playError();
+        setIsSimPlaying(false);
+      } else if (isSingleStep) {
+        if (latest?.type === 'deliver') sound.playDeliver();
+        else if (latest?.type === 'weld') sound.playWeld();
+        else if (latest?.type === 'destroy') sound.playDestroy();
+        else if (latest?.type === 'transform' || latest?.type === 'cut' || latest?.type === 'store') sound.playTransform();
+        else sound.playStep();
+      } else {
+        const tickEvents = nextWorld.events.filter((ev) => ev.tick === nextWorld.tick);
+        const triggerEv =
+          tickEvents.find((ev) => ev.type === 'deliver') ??
+          tickEvents.find((ev) => ev.type === 'weld' || ev.type === 'cut') ??
+          tickEvents.find((ev) => ev.type === 'destroy') ??
+          tickEvents.find((ev) => ev.type === 'transform' || ev.type === 'store');
+
+        if (triggerEv) {
+          const delayMs = Math.max(
+            40,
+            Math.round((BASE_SIM_TICK_MS / simSpeedRef.current) * TOKEN_TRIGGER_ALPHA),
+          );
+          pendingSoundTimerRef.current = window.setTimeout(() => {
+            pendingSoundTimerRef.current = null;
+            if (triggerEv.type === 'deliver') sound.playDeliver();
+            else if (triggerEv.type === 'weld' || triggerEv.type === 'cut') sound.playWeld();
+            else if (triggerEv.type === 'destroy') sound.playDestroy();
+            else sound.playTransform();
+          }, delayMs);
+        } else {
+          sound.playStep();
+        }
+      }
     }
   }, []);
 
   // Title Screen ambient showcase loop & Playing Simulation Stepper
   useEffect(() => {
     if (appState === 'title') {
-      const intervalMs = 680;
+      const intervalMs = BASE_SIM_TICK_MS;
       let lastTickTime = performance.now();
       let animId = 0;
 
@@ -466,8 +525,7 @@ export default function App() {
       return;
     }
 
-    const baseMs = 540;
-    const intervalMs = baseMs / simSpeed;
+    const intervalMs = BASE_SIM_TICK_MS / simSpeed;
     let lastTickTime = performance.now();
     let animId = 0;
 
@@ -484,7 +542,13 @@ export default function App() {
     };
 
     animId = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(animId);
+    return () => {
+      cancelAnimationFrame(animId);
+      if (pendingSoundTimerRef.current !== null) {
+        window.clearTimeout(pendingSoundTimerRef.current);
+        pendingSoundTimerRef.current = null;
+      }
+    };
   }, [appState, isSimPlaying, simSpeed, titleTourLevel, advanceSimulationTick]);
 
   const handleStepOnce = useCallback(() => {
@@ -859,17 +923,25 @@ export default function App() {
     [appState, isSimPlaying, commitBlocks, showBudgetWarning],
   );
 
-  const handleApplyDemo = useCallback(() => {
-    if (isSimPlaying || !currentLevel.demoSolution) return;
-    const demoBlocks: PlacedBlock[] = currentLevel.demoSolution.map((d) => ({
-      type: d.type,
-      coord: { ...d.coord },
-      config: { ...d.config },
-    }));
-    sound.playPlace();
-    setInspectedCoord(null);
-    commitBlocks(demoBlocks, true);
-  }, [isSimPlaying, currentLevel, commitBlocks]);
+  const handleApplyDemo = useCallback(
+    (variantIdx = 0) => {
+      if (isSimPlaying) return;
+      const sourceBlocks =
+        variantIdx === 0
+          ? currentLevel.demoSolution
+          : currentLevel.altDemoSolutions?.[variantIdx - 1]?.blocks;
+      if (!sourceBlocks) return;
+      const demoBlocks: PlacedBlock[] = sourceBlocks.map((d) => ({
+        type: d.type,
+        coord: { ...d.coord },
+        config: { ...d.config },
+      }));
+      sound.playPlace();
+      setInspectedCoord(null);
+      commitBlocks(demoBlocks, true);
+    },
+    [isSimPlaying, currentLevel, commitBlocks],
+  );
 
   const handleClearBoard = useCallback(() => {
     if (isSimPlaying) return;
@@ -964,6 +1036,8 @@ export default function App() {
         setSelectedTool('erase');
       } else if (e.code === 'KeyH') {
         setDockCollapsed((c) => !c);
+      } else if (e.code === 'KeyI') {
+        setBriefingExpanded((v) => !v);
       } else if (e.key >= '1' && e.key <= '9') {
         const idx = parseInt(e.key, 10) - 1;
         const tool = currentLevel.availableTools[idx];
@@ -1057,10 +1131,7 @@ export default function App() {
     return counts;
   }, [playerBlocks]);
 
-  const isCurrentCompleted = Boolean(progress[currentLevel.id]?.completed);
-  const canShowDemo =
-    Boolean(currentLevel.demoSolution) &&
-    (currentLevel.id === 'sandbox' || isCurrentCompleted);
+  const canShowDemo = Boolean(currentLevel.demoSolution);
   const revealedHintsCount = hintsRevealedByLevel[currentLevel.id] ?? 0;
 
   const handleRevealNextHint = useCallback(() => {
@@ -1113,6 +1184,8 @@ export default function App() {
           onOpenLevels={() => setLevelsModalOpen(true)}
           theme={theme}
           onChangeTheme={setTheme}
+          uiStyle={uiStyle}
+          onToggleUiStyle={handleToggleUiStyle}
           completedCount={completedCount}
           totalLevels={ALL_PUZZLE_LEVELS.length}
         />
@@ -1128,9 +1201,8 @@ export default function App() {
             canStepBack={tickHistoryCount > 0}
             simSpeed={simSpeed}
             theme={theme}
+            uiStyle={uiStyle}
             muted={muted}
-            playerBlockCount={playerBlocks.length}
-            area={areaMetric}
             continuousCamera={continuousCamera}
             onTogglePlay={() => {
               if (world.status === 'victory' || world.status === 'error') {
@@ -1150,6 +1222,7 @@ export default function App() {
               setLevelsModalOpen(true);
             }}
             onChangeTheme={setTheme}
+            onToggleUiStyle={handleToggleUiStyle}
             onResetCamera={() => {
               setContinuousCamera(false);
               setCameraResetTrigger((c) => c + 1);
@@ -1173,13 +1246,13 @@ export default function App() {
             <div
               role="status"
               aria-live="polite"
-              className="fixed top-20 left-1/2 -translate-x-1/2 z-30 cel-panel rounded-xl px-4 py-2 bg-[#fffbeb] text-xs font-bold text-[#92400e] max-w-md text-center"
+              className="fixed top-20 left-1/2 -translate-x-1/2 z-30 hud-panel rounded-xl px-4 py-2 bg-[#fffbeb] dark:bg-amber-950/95 text-xs font-bold text-[#92400e] dark:text-amber-200 dark:border-amber-400/50 max-w-md text-center"
             >
               {budgetWarning}
             </div>
           )}
 
-          {/* Top-left 10-second 4-line Briefing Card (for levels with structured briefing) */}
+          {/* Top-left Compact «Задача?» Chip / Expandable 10-second Briefing Card */}
           {appState === 'playing' &&
             currentLevel.briefing &&
             !onboardingInfo.step &&
@@ -1187,21 +1260,24 @@ export default function App() {
             !levelsModalOpen &&
             !hintsDrawerOpen &&
             !helpOpen && (
-              <div className="fixed top-[10.25rem] sm:top-16 left-2.5 z-[24] pointer-events-none">
-                <BriefingCard level={currentLevel} />
+              <div className="fixed top-[9.75rem] sm:top-16 left-3 z-[24] pointer-events-none">
+                <BriefingCard
+                  level={currentLevel}
+                  expanded={briefingExpanded}
+                  onToggle={setBriefingExpanded}
+                />
               </div>
             )}
 
-          {/* Top-right Goal & Optimization Cards (tucked cleanly away when Inspector or Error card is visible) */}
+          {/* Top-right Unified Skylines Goal + Telemetry + Flow Sparkline Card */}
           {appState === 'playing' &&
             !inspectedBlock &&
             world.status !== 'error' &&
             !levelsModalOpen &&
             !hintsDrawerOpen &&
             !helpOpen && (
-              <div className="fixed top-[10.25rem] sm:top-16 right-2.5 z-[25] pointer-events-none flex flex-row sm:flex-col items-start sm:items-end gap-1.5 sm:gap-2">
-                <GoalCard level={currentLevel} world={world} />
-                <OptimizationCard
+              <div className="fixed top-[9.75rem] sm:top-16 right-3 z-[25] pointer-events-none flex flex-col items-end gap-2">
+                <GoalCard
                   level={currentLevel}
                   world={world}
                   playerBlockCount={playerBlocks.length}
@@ -1235,7 +1311,7 @@ export default function App() {
             isRunning={isSimPlaying}
             canUndo={editPast.length > 0}
             canRedo={editFuture.length > 0}
-            canShowDemo={canShowDemo}
+            hasDemo={canShowDemo}
             hintsCount={currentLevel.hints?.length ?? 0}
             revealedHintsCount={revealedHintsCount}
             maxTotalBlocks={currentLevel.maxTotalBlocks}
@@ -1264,7 +1340,6 @@ export default function App() {
               setIsSimPlaying(false);
               setHintsDrawerOpen(true);
             }}
-            onApplyDemoSolution={handleApplyDemo}
             onClearBoard={handleClearBoard}
           />
 
@@ -1350,9 +1425,9 @@ export default function App() {
           onReplay={handleResetSim}
           onApplyDemo={
             canShowDemo
-              ? () => {
+              ? (variantIdx) => {
                   setAppState('playing');
-                  handleApplyDemo();
+                  handleApplyDemo(variantIdx);
                 }
               : undefined
           }
@@ -1367,7 +1442,6 @@ export default function App() {
         <HintsDrawer
           level={currentLevel}
           revealedCount={revealedHintsCount}
-          isCompleted={isCurrentCompleted}
           onRevealNext={handleRevealNextHint}
           onApplyDemoSolution={handleApplyDemo}
           onClose={() => setHintsDrawerOpen(false)}

@@ -556,8 +556,24 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
   world.errorHighlightHexes = [];
   world.errorReason = null;
   world.fallingTokens = [];
+  world.consumedTokens = [];
+  world.consumedBonds = [];
 
-  // Phase 1: Snapshot current state & reset interpolation prevCoords
+  const recordConsumed = (tok: Token, kind: 'deliver' | 'store' | 'destroy' | 'merge') => {
+    world.consumedTokens!.push({
+      id: tok.id,
+      value: tok.prevValue ?? tok.value,
+      coord: { ...tok.coord },
+      prevCoord: { ...tok.prevCoord },
+      moveSource: tok.moveSource,
+      rotatedFrom: tok.rotatedFrom
+        ? { pivot: { ...tok.rotatedFrom.pivot }, angleDelta: tok.rotatedFrom.angleDelta }
+        : undefined,
+      kind,
+    });
+  };
+
+  // Phase 1: Snapshot current state & reset interpolation prevCoords/prevValues
   for (const m of world.machines.values()) {
     if (m.state.activeFlashTicks > 0) {
       m.state.activeFlashTicks -= 1;
@@ -565,6 +581,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
   }
   for (const t of world.tokens.values()) {
     t.prevCoord = { ...t.coord };
+    t.prevValue = t.value;
     t.rotatedFrom = undefined;
     t.moveSource = undefined;
   }
@@ -1114,6 +1131,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
     const newTok: Token = {
       id: `t_${world.nextTokenId++}`,
       value: val,
+      prevValue: val,
       coord: { ...spawnCoord },
       prevCoord: { ...machine.coord },
       moveSource: 'spawner',
@@ -1174,6 +1192,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
     const copyTok: Token = {
       id: `t_${world.nextTokenId++}`,
       value: tok.value,
+      prevValue: tok.value,
       coord: { ...copyCoord },
       prevCoord: { ...machine.coord },
       moveSource: 'split',
@@ -1225,6 +1244,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
           );
           return world;
         }
+        recordConsumed(t2, 'merge');
         world.tokens.delete(t2.id);
         t1.value = sum;
         t1.producedByAdderAtTick = world.tick;
@@ -1265,6 +1285,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
 
       if (machine.state.memory === null) {
         machine.state.memory = tok.value;
+        recordConsumed(tok, 'store');
         world.tokens.delete(tok.id);
         machine.state.activeFlashTicks = 1;
         machine.state.lastActionTick = world.tick;
@@ -1334,13 +1355,17 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       }
       const big = Math.max(a, b);
       const small = Math.min(a, b);
-      if (removeTok) world.tokens.delete(removeTok.id);
+      if (removeTok) {
+        recordConsumed(removeTok, 'merge');
+        world.tokens.delete(removeTok.id);
+      }
       machine.state.memory = null;
       keepTok.value = big;
       keepTok.producedByAdderAtTick = world.tick;
       const smallTok: Token = {
         id: `t_${world.nextTokenId++}`,
         value: small,
+        prevValue: small,
         coord: { ...altCoord },
         prevCoord: { ...machine.coord },
         moveSource: 'split',
@@ -1383,6 +1408,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
 
     if (machine.state.memory === null) {
       machine.state.memory = tok.value;
+      recordConsumed(tok, 'store');
       world.tokens.delete(tok.id);
       machine.state.activeFlashTicks = 1;
       machine.state.lastActionTick = world.tick;
@@ -1484,6 +1510,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       const remTok: Token = {
         id: `t_${world.nextTokenId++}`,
         value: r,
+        prevValue: r,
         coord: { ...remCoord },
         prevCoord: { ...machine.coord },
         moveSource: 'split',
@@ -1543,6 +1570,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       const splitTok: Token = {
         id: `t_${world.nextTokenId++}`,
         value: half,
+        prevValue: half,
         coord: { ...altCoord },
         prevCoord: { ...machine.coord },
         moveSource: 'split',
@@ -1626,7 +1654,14 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
     const compSet = new Set(comp.tokenIds);
     const vals = comp.tokenIds.map((id) => world.tokens.get(id)?.value ?? 0);
     for (const id of comp.tokenIds) {
+      const deadTok = world.tokens.get(id);
+      if (deadTok) recordConsumed(deadTok, 'destroy');
       world.tokens.delete(id);
+    }
+    for (const b of world.bonds) {
+      if (compSet.has(b.a) || compSet.has(b.b)) {
+        world.consumedBonds!.push({ ...b });
+      }
     }
     world.bonds = world.bonds.filter((b) => !compSet.has(b.a) && !compSet.has(b.b));
     machine.state.activeFlashTicks = 1;
@@ -1734,7 +1769,14 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         // Remove all tokens in the matched component & their bonds
         const compSet = new Set(comp.tokenIds);
         for (const id of comp.tokenIds) {
+          const delTok = world.tokens.get(id);
+          if (delTok) recordConsumed(delTok, 'deliver');
           world.tokens.delete(id);
+        }
+        for (const b of world.bonds) {
+          if (compSet.has(b.a) || compSet.has(b.b)) {
+            world.consumedBonds!.push({ ...b });
+          }
         }
         world.bonds = world.bonds.filter((b) => !compSet.has(b.a) && !compSet.has(b.b));
 

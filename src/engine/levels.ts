@@ -378,12 +378,26 @@ export const CAMPAIGN_LEVELS: LevelDefinition[] = [
         },
       },
     ],
+    demoLabel: 'Верхний обход через (0, −1)',
     demoSolution: [
       { type: 'div2', coord: { q: -2, r: 0 }, config: { dir: 5 } },
       { type: 'div2', coord: { q: -1, r: -1 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 0, r: -1 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 1, r: -1 }, config: { dir: 1 } },
       { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+    ],
+    altDemoSolutions: [
+      {
+        label: 'Нижний обход через (0, 1)',
+        description: 'Симметричный маршрут из 5 блоков под провалом',
+        blocks: [
+          { type: 'div2', coord: { q: -2, r: 0 }, config: { dir: 1 } },
+          { type: 'div2', coord: { q: -2, r: 1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: -1, r: 1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 0, r: 1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 1, r: 1 }, config: { dir: 5 } },
+        ],
+      },
     ],
     verificationRuns: [
       {
@@ -696,14 +710,29 @@ export const CAMPAIGN_LEVELS: LevelDefinition[] = [
         },
       },
     ],
+    demoLabel: '6 бл. · Сумматор в (−1, 0)',
     demoSolution: [
       { type: 'conveyor', coord: { q: -2, r: -1 }, config: { dir: 0 } },
-      { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 0 } },
-      { type: 'conveyor', coord: { q: 0, r: -1 }, config: { dir: 1 } },
-      { type: 'conveyor', coord: { q: -2, r: 1 }, config: { dir: 0 } },
-      { type: 'conveyor', coord: { q: -1, r: 1 }, config: { dir: 5 } },
-      { type: 'adder', coord: { q: 0, r: 0 }, config: { dir: 0 } },
+      { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 1 } },
+      { type: 'conveyor', coord: { q: -2, r: 1 }, config: { dir: 5 } },
+      { type: 'adder', coord: { q: -1, r: 0 }, config: { dir: 0 } },
+      { type: 'conveyor', coord: { q: 0, r: 0 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+    ],
+    altDemoSolutions: [
+      {
+        label: '7 бл. · Сумматор в (0, 0)',
+        description: 'Классическое сведение в центре поля',
+        blocks: [
+          { type: 'conveyor', coord: { q: -2, r: -1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 0, r: -1 }, config: { dir: 1 } },
+          { type: 'conveyor', coord: { q: -2, r: 1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: -1, r: 1 }, config: { dir: 5 } },
+          { type: 'adder', coord: { q: 0, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+        ],
+      },
     ],
     verificationRuns: [
       {
@@ -965,6 +994,7 @@ export const CAMPAIGN_LEVELS: LevelDefinition[] = [
         },
       },
     ],
+    demoLabel: 'Два +1 на верхней ветке',
     demoSolution: [
       { type: 'add1', coord: { q: -2, r: -1 }, config: { dir: 0 } },
       { type: 'add1', coord: { q: -1, r: -1 }, config: { dir: 0 } },
@@ -973,6 +1003,21 @@ export const CAMPAIGN_LEVELS: LevelDefinition[] = [
       { type: 'conveyor', coord: { q: -1, r: 0 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 0, r: 0 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+    ],
+    altDemoSolutions: [
+      {
+        label: 'По +1 на верхнюю и нижнюю ветки',
+        description: 'Симметричное распределение (+1) + (+1)',
+        blocks: [
+          { type: 'add1', coord: { q: -2, r: -1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 0 } },
+          { type: 'welder', coord: { q: 0, r: -1 }, config: { dir: 1 } },
+          { type: 'add1', coord: { q: -2, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: -1, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 0, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+        ],
+      },
     ],
     hints: [
       'Сумма исходных пар равна 3+5=8, 4+4=8, 5+3=8 — каждой паре не хватает ровно +2 до 10!',
@@ -1119,6 +1164,7 @@ export const EUREKA_LEVELS: LevelDefinition[] = [
         },
       },
     ],
+    demoLabel: '×2 по прямой, копия x снизу',
     demoSolution: [
       { type: 'dup', coord: { q: -2, r: 0 }, config: { dir: 0, altDir: 1 } },
       { type: 'mul2', coord: { q: -1, r: 0 }, config: { dir: 0 } },
@@ -1126,6 +1172,20 @@ export const EUREKA_LEVELS: LevelDefinition[] = [
       { type: 'conveyor', coord: { q: -1, r: 1 }, config: { dir: 5 } },
       { type: 'adder', coord: { q: 0, r: 0 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+    ],
+    altDemoSolutions: [
+      {
+        label: '×2 по верхней дуге, x прямо',
+        description: 'Верхний обход с удвоением через (−1, −1)',
+        blocks: [
+          { type: 'dup', coord: { q: -2, r: 0 }, config: { dir: 0, altDir: 5 } },
+          { type: 'mul2', coord: { q: -1, r: -1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 0, r: -1 }, config: { dir: 1 } },
+          { type: 'conveyor', coord: { q: -1, r: 0 }, config: { dir: 0 } },
+          { type: 'adder', coord: { q: 0, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+        ],
+      },
     ],
     verificationRuns: [
       {
@@ -1280,6 +1340,7 @@ export const EUREKA_LEVELS: LevelDefinition[] = [
         },
       },
     ],
+    demoLabel: 'Инверсия −x по нижней ветви',
     demoSolution: [
       { type: 'filter', coord: { q: -2, r: 0 }, config: { dir: 1, altDir: 0, filterRule: 'negative' } },
       { type: 'neg', coord: { q: -2, r: 1 }, config: { dir: 0 } },
@@ -1287,6 +1348,20 @@ export const EUREKA_LEVELS: LevelDefinition[] = [
       { type: 'conveyor', coord: { q: -1, r: 0 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 0, r: 0 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+    ],
+    altDemoSolutions: [
+      {
+        label: 'Инверсия −x через верхнюю дугу',
+        description: 'Отрицательные уходят наверх на (−1, −1)',
+        blocks: [
+          { type: 'filter', coord: { q: -2, r: 0 }, config: { dir: 5, altDir: 0, filterRule: 'negative' } },
+          { type: 'neg', coord: { q: -1, r: -1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 0, r: -1 }, config: { dir: 1 } },
+          { type: 'conveyor', coord: { q: -1, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 0, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+        ],
+      },
     ],
     verificationRuns: [
       {
@@ -1357,12 +1432,26 @@ export const EUREKA_LEVELS: LevelDefinition[] = [
         },
       },
     ],
+    demoLabel: 'Верхняя петля (быстрее: 47 т.)',
     demoSolution: [
-      { type: 'filter', coord: { q: -1, r: 0 }, config: { dir: 1, altDir: 0, filterRule: 'even' } },
-      { type: 'div2', coord: { q: -1, r: 1 }, config: { dir: 3 } },
-      { type: 'conveyor', coord: { q: -2, r: 1 }, config: { dir: 5 } },
+      { type: 'filter', coord: { q: -1, r: 0 }, config: { dir: 5, altDir: 0, filterRule: 'even' } },
+      { type: 'div2', coord: { q: 0, r: -1 }, config: { dir: 3 } },
+      { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 1 } },
       { type: 'conveyor', coord: { q: 0, r: 0 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+    ],
+    altDemoSolutions: [
+      {
+        label: 'Нижняя петля (52 т.)',
+        description: 'Компактный треугольник деления снизу',
+        blocks: [
+          { type: 'filter', coord: { q: -1, r: 0 }, config: { dir: 1, altDir: 0, filterRule: 'even' } },
+          { type: 'div2', coord: { q: -1, r: 1 }, config: { dir: 3 } },
+          { type: 'conveyor', coord: { q: -2, r: 1 }, config: { dir: 5 } },
+          { type: 'conveyor', coord: { q: 0, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+        ],
+      },
     ],
     verificationRuns: [
       {
@@ -1466,14 +1555,30 @@ export const EUREKA_LEVELS: LevelDefinition[] = [
         },
       },
     ],
+    demoLabel: 'Фильтр сразу на выходе (15 т.)',
     demoSolution: [
       { type: 'conveyor', coord: { q: -2, r: -1 }, config: { dir: 0 } },
-      { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 1 } },
-      { type: 'neg', coord: { q: -2, r: 1 }, config: { dir: 5 } },
-      { type: 'adder', coord: { q: -1, r: 0 }, config: { dir: 0 } },
-      { type: 'filter', coord: { q: 0, r: 0 }, config: { dir: 0, altDir: 1, filterRule: 'positive' } },
-      { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
-      { type: 'conveyor', coord: { q: 0, r: 1 }, config: { dir: 0 } },
+      { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 0 } },
+      { type: 'conveyor', coord: { q: 0, r: -1 }, config: { dir: 1 } },
+      { type: 'neg', coord: { q: -2, r: 1 }, config: { dir: 0 } },
+      { type: 'conveyor', coord: { q: -1, r: 1 }, config: { dir: 5 } },
+      { type: 'adder', coord: { q: 0, r: 0 }, config: { dir: 0 } },
+      { type: 'filter', coord: { q: 1, r: 0 }, config: { dir: 0, altDir: 1, filterRule: 'positive' } },
+    ],
+    altDemoSolutions: [
+      {
+        label: 'Сумматор в (−1, 0), фильтр в (0, 0)',
+        description: 'Раннее вычитание в центре поля (16 т.)',
+        blocks: [
+          { type: 'conveyor', coord: { q: -2, r: -1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 1 } },
+          { type: 'neg', coord: { q: -2, r: 1 }, config: { dir: 5 } },
+          { type: 'adder', coord: { q: -1, r: 0 }, config: { dir: 0 } },
+          { type: 'filter', coord: { q: 0, r: 0 }, config: { dir: 0, altDir: 1, filterRule: 'positive' } },
+          { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 0, r: 1 }, config: { dir: 0 } },
+        ],
+      },
     ],
     verificationRuns: [
       {
@@ -1550,12 +1655,26 @@ export const EUREKA_LEVELS: LevelDefinition[] = [
         },
       },
     ],
+    demoLabel: 'Верхняя петля (60 т.)',
     demoSolution: [
-      { type: 'filter', coord: { q: -1, r: 0 }, config: { dir: 1, altDir: 0, filterRule: 'gt5' } },
-      { type: 'sub1', coord: { q: -1, r: 1 }, config: { dir: 3 } },
-      { type: 'conveyor', coord: { q: -2, r: 1 }, config: { dir: 5 } },
+      { type: 'filter', coord: { q: -1, r: 0 }, config: { dir: 5, altDir: 0, filterRule: 'gt5' } },
+      { type: 'sub1', coord: { q: 0, r: -1 }, config: { dir: 3 } },
+      { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 1 } },
       { type: 'conveyor', coord: { q: 0, r: 0 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+    ],
+    altDemoSolutions: [
+      {
+        label: 'Нижняя петля (64 т.)',
+        description: 'Симметричный цикл вычитания под основной линией',
+        blocks: [
+          { type: 'filter', coord: { q: -1, r: 0 }, config: { dir: 1, altDir: 0, filterRule: 'gt5' } },
+          { type: 'sub1', coord: { q: -1, r: 1 }, config: { dir: 3 } },
+          { type: 'conveyor', coord: { q: -2, r: 1 }, config: { dir: 5 } },
+          { type: 'conveyor', coord: { q: 0, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+        ],
+      },
     ],
     verificationRuns: [
       {
@@ -1626,6 +1745,7 @@ export const EUREKA_LEVELS: LevelDefinition[] = [
         },
       },
     ],
+    demoLabel: 'Остаток по нижней ветви',
     demoSolution: [
       { type: 'divmod', coord: { q: -2, r: 0 }, config: { dir: 0, altDir: 1, divisor: 10 } },
       { type: 'conveyor', coord: { q: -1, r: 0 }, config: { dir: 0 } },
@@ -1633,6 +1753,20 @@ export const EUREKA_LEVELS: LevelDefinition[] = [
       { type: 'conveyor', coord: { q: -1, r: 1 }, config: { dir: 5 } },
       { type: 'adder', coord: { q: 0, r: 0 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+    ],
+    altDemoSolutions: [
+      {
+        label: 'Остаток через верхнюю дугу',
+        description: 'Обход остатка r сверху через (−1, −1)',
+        blocks: [
+          { type: 'divmod', coord: { q: -2, r: 0 }, config: { dir: 0, altDir: 5, divisor: 10 } },
+          { type: 'conveyor', coord: { q: -1, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 0, r: -1 }, config: { dir: 1 } },
+          { type: 'adder', coord: { q: 0, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+        ],
+      },
     ],
     verificationRuns: [
       {
@@ -1714,25 +1848,50 @@ export const EUREKA_LEVELS: LevelDefinition[] = [
         },
       },
     ],
+    demoLabel: '16 бл., 20 т. · Ранняя сварка в q = 1',
     demoSolution: [
       { type: 'dup', coord: { q: -3, r: 0 }, config: { dir: 0, altDir: 5 } },
       { type: 'conveyor', coord: { q: -2, r: -1 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 0, r: -1 }, config: { dir: 0 } },
-      { type: 'conveyor', coord: { q: 1, r: -1 }, config: { dir: 0 } },
-      { type: 'welder', coord: { q: 2, r: -1 }, config: { dir: 1 } },
+      { type: 'welder', coord: { q: 1, r: -1 }, config: { dir: 1 } },
       { type: 'dup', coord: { q: -2, r: 0 }, config: { dir: 0, altDir: 1 } },
       { type: 'mul2', coord: { q: -1, r: 0 }, config: { dir: 0 } },
       { type: 'dup', coord: { q: 0, r: 0 }, config: { dir: 0, altDir: 1 } },
-      { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
-      { type: 'welder', coord: { q: 2, r: 0 }, config: { dir: 1 } },
-      { type: 'conveyor', coord: { q: -2, r: 1 }, config: { dir: 1 } },
-      { type: 'conveyor', coord: { q: -2, r: 2 }, config: { dir: 0 } },
+      { type: 'welder', coord: { q: 1, r: 0 }, config: { dir: 1 } },
+      { type: 'conveyor', coord: { q: -2, r: 1 }, config: { dir: 0 } },
+      { type: 'conveyor', coord: { q: -1, r: 1 }, config: { dir: 1 } },
       { type: 'conveyor', coord: { q: -1, r: 2 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 0, r: 2 }, config: { dir: 5 } },
       { type: 'conveyor', coord: { q: 0, r: 1 }, config: { dir: 0 } },
       { type: 'adder', coord: { q: 1, r: 1 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 2, r: 1 }, config: { dir: 0 } },
+    ],
+    altDemoSolutions: [
+      {
+        label: '18 бл., 22 т. · Сборка у выхода q = 2',
+        description: 'Классическая схема с параллельной сваркой у приёмника',
+        blocks: [
+          { type: 'dup', coord: { q: -3, r: 0 }, config: { dir: 0, altDir: 5 } },
+          { type: 'conveyor', coord: { q: -2, r: -1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 0, r: -1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 1, r: -1 }, config: { dir: 0 } },
+          { type: 'welder', coord: { q: 2, r: -1 }, config: { dir: 1 } },
+          { type: 'dup', coord: { q: -2, r: 0 }, config: { dir: 0, altDir: 1 } },
+          { type: 'mul2', coord: { q: -1, r: 0 }, config: { dir: 0 } },
+          { type: 'dup', coord: { q: 0, r: 0 }, config: { dir: 0, altDir: 1 } },
+          { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+          { type: 'welder', coord: { q: 2, r: 0 }, config: { dir: 1 } },
+          { type: 'conveyor', coord: { q: -2, r: 1 }, config: { dir: 1 } },
+          { type: 'conveyor', coord: { q: -2, r: 2 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: -1, r: 2 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 0, r: 2 }, config: { dir: 5 } },
+          { type: 'conveyor', coord: { q: 0, r: 1 }, config: { dir: 0 } },
+          { type: 'adder', coord: { q: 1, r: 1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 2, r: 1 }, config: { dir: 0 } },
+        ],
+      },
     ],
     verificationRuns: [
       {
@@ -1817,6 +1976,7 @@ export const EUREKA_LEVELS: LevelDefinition[] = [
         },
       },
     ],
+    demoLabel: '18 = 4·4 + 2 (÷4, остаток ×2)',
     demoSolution: [
       { type: 'divmod', coord: { q: -2, r: 0 }, config: { dir: 0, altDir: 5, divisor: 4 } },
       { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 0 } },
@@ -1825,6 +1985,21 @@ export const EUREKA_LEVELS: LevelDefinition[] = [
       { type: 'conveyor', coord: { q: -1, r: 0 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 0, r: 0 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+    ],
+    altDemoSolutions: [
+      {
+        label: '18 = 7·2 + 4 (÷7, частное ×2)',
+        description: 'Альтернативная математика: остаток 4 сразу готов, а частное 2 удваивается',
+        blocks: [
+          { type: 'divmod', coord: { q: -2, r: 0 }, config: { dir: 0, altDir: 5, divisor: 7 } },
+          { type: 'mul2', coord: { q: -1, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 0, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 0, r: -1 }, config: { dir: 0 } },
+          { type: 'welder', coord: { q: 1, r: -1 }, config: { dir: 1 } },
+        ],
+      },
     ],
     verificationRuns: [
       {
@@ -1917,6 +2092,7 @@ export const IMPOSSIBLE_LEVELS: LevelDefinition[] = [
         },
       },
     ],
+    demoLabel: 'Вертикальная сборка по q = 0',
     demoSolution: [
       { type: 'divmod', coord: { q: -2, r: 0 }, config: { dir: 0, altDir: 5, divisor: 3 } },
       { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 0 } },
@@ -1926,6 +2102,22 @@ export const IMPOSSIBLE_LEVELS: LevelDefinition[] = [
       { type: 'welder', coord: { q: 0, r: 0 }, config: { dir: 1 } },
       { type: 'conveyor', coord: { q: 0, r: 1 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 1, r: 1 }, config: { dir: 0 } },
+    ],
+    altDemoSolutions: [
+      {
+        label: 'Зеркальная сборка через верхний выход',
+        description: 'Первый остаток вниз, вывод готовой цепи через (1, −1) → (2, −1)',
+        blocks: [
+          { type: 'divmod', coord: { q: -2, r: 0 }, config: { dir: 0, altDir: 1, divisor: 3 } },
+          { type: 'conveyor', coord: { q: -2, r: 1 }, config: { dir: 0 } },
+          { type: 'divmod', coord: { q: -1, r: 0 }, config: { dir: 0, altDir: 5, divisor: 3 } },
+          { type: 'conveyor', coord: { q: 0, r: -1 }, config: { dir: 0 } },
+          { type: 'welder', coord: { q: -1, r: 1 }, config: { dir: 5 } },
+          { type: 'welder', coord: { q: 0, r: 0 }, config: { dir: 5 } },
+          { type: 'conveyor', coord: { q: 1, r: -1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 2, r: -1 }, config: { dir: 0 } },
+        ],
+      },
     ],
     verificationRuns: [
       {
@@ -2015,19 +2207,38 @@ export const IMPOSSIBLE_LEVELS: LevelDefinition[] = [
         },
       },
     ],
+    demoLabel: '10 бл., 7 т. · Прямая сборка по центру',
     demoSolution: [
       { type: 'divmod', coord: { q: -2, r: 0 }, config: { dir: 1, altDir: 5, divisor: 2 } },
       { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 0, r: -1 }, config: { dir: 1 } },
-      { type: 'divmod', coord: { q: -2, r: 1 }, config: { dir: 0, altDir: 1, divisor: 2 } },
-      { type: 'conveyor', coord: { q: -1, r: 1 }, config: { dir: 4 } },
-      { type: 'welder', coord: { q: -1, r: 0 }, config: { dir: 0 } },
-      { type: 'welder', coord: { q: 0, r: 0 }, config: { dir: 0 } },
-      { type: 'conveyor', coord: { q: -2, r: 2 }, config: { dir: 0 } },
-      { type: 'conveyor', coord: { q: -1, r: 2 }, config: { dir: 5 } },
+      { type: 'divmod', coord: { q: -2, r: 1 }, config: { dir: 5, altDir: 0, divisor: 2 } },
+      { type: 'conveyor', coord: { q: -1, r: 1 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 0, r: 1 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 1, r: 1 }, config: { dir: 4 } },
+      { type: 'welder', coord: { q: -1, r: 0 }, config: { dir: 0 } },
+      { type: 'welder', coord: { q: 0, r: 0 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+    ],
+    altDemoSolutions: [
+      {
+        label: '12 бл., 8 т. · Вывод остатка снизу',
+        description: 'Расширенная схема с нижней петлёй через (−2, 2)',
+        blocks: [
+          { type: 'divmod', coord: { q: -2, r: 0 }, config: { dir: 1, altDir: 5, divisor: 2 } },
+          { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 0, r: -1 }, config: { dir: 1 } },
+          { type: 'divmod', coord: { q: -2, r: 1 }, config: { dir: 0, altDir: 1, divisor: 2 } },
+          { type: 'conveyor', coord: { q: -1, r: 1 }, config: { dir: 4 } },
+          { type: 'welder', coord: { q: -1, r: 0 }, config: { dir: 0 } },
+          { type: 'welder', coord: { q: 0, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: -2, r: 2 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: -1, r: 2 }, config: { dir: 5 } },
+          { type: 'conveyor', coord: { q: 0, r: 1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 1, r: 1 }, config: { dir: 4 } },
+          { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+        ],
+      },
     ],
     verificationRuns: [
       {
@@ -2254,6 +2465,7 @@ export const IMPOSSIBLE_LEVELS: LevelDefinition[] = [
         },
       },
     ],
+    demoLabel: 'Маска x ≥ 0 сверху, x < 0 снизу',
     demoSolution: [
       { type: 'filter', coord: { q: -2, r: 0 }, config: { dir: 1, altDir: 5, filterRule: 'negative' } },
       { type: 'neg', coord: { q: -1, r: -1 }, config: { dir: 0 } },
@@ -2263,6 +2475,22 @@ export const IMPOSSIBLE_LEVELS: LevelDefinition[] = [
       { type: 'conveyor', coord: { q: -1, r: 1 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 1, r: 1 }, config: { dir: 5 } },
       { type: 'conveyor', coord: { q: 2, r: 0 }, config: { dir: 0 } },
+    ],
+    altDemoSolutions: [
+      {
+        label: 'x < 0 сверху напрямую, маска снизу',
+        description: 'Поменяны мосты местами: отрицательные идут по верху без инверсии',
+        blocks: [
+          { type: 'filter', coord: { q: -2, r: 0 }, config: { dir: 5, altDir: 1, filterRule: 'negative' } },
+          { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 1, r: -1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 2, r: -1 }, config: { dir: 1 } },
+          { type: 'neg', coord: { q: -2, r: 1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: -1, r: 1 }, config: { dir: 0 } },
+          { type: 'neg', coord: { q: 1, r: 1 }, config: { dir: 5 } },
+          { type: 'conveyor', coord: { q: 2, r: 0 }, config: { dir: 0 } },
+        ],
+      },
     ],
     verificationRuns: [
       {
@@ -2728,13 +2956,27 @@ export const GRADE5_LEVELS: LevelDefinition[] = [
         },
       },
     ],
+    demoLabel: '5 бл. · Сверхкомпактный подъём ×2 ↗',
     demoSolution: [
-      { type: 'conveyor', coord: { q: 0, r: -1 }, config: { dir: 0 } },
-      { type: 'welder', coord: { q: 1, r: -1 }, config: { dir: 1 } },
+      { type: 'welder', coord: { q: 0, r: -1 }, config: { dir: 1 } },
       { type: 'add1', coord: { q: -2, r: 1 }, config: { dir: 0 } },
-      { type: 'mul2', coord: { q: -1, r: 1 }, config: { dir: 0 } },
-      { type: 'conveyor', coord: { q: 0, r: 1 }, config: { dir: 5 } },
+      { type: 'mul2', coord: { q: -1, r: 1 }, config: { dir: 5 } },
+      { type: 'conveyor', coord: { q: 0, r: 0 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+    ],
+    altDemoSolutions: [
+      {
+        label: '6 бл. · Параллельная сборка у q = 1',
+        description: 'Наглядная симметричная подача на столбец q = 1',
+        blocks: [
+          { type: 'conveyor', coord: { q: 0, r: -1 }, config: { dir: 0 } },
+          { type: 'welder', coord: { q: 1, r: -1 }, config: { dir: 1 } },
+          { type: 'add1', coord: { q: -2, r: 1 }, config: { dir: 0 } },
+          { type: 'mul2', coord: { q: -1, r: 1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 0, r: 1 }, config: { dir: 5 } },
+          { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+        ],
+      },
     ],
     verificationRuns: [
       {
@@ -2972,6 +3214,7 @@ export const GRADE5_LEVELS: LevelDefinition[] = [
         },
       },
     ],
+    demoLabel: 'Чётные сверху, нечётные (−1) снизу',
     demoSolution: [
       { type: 'filter', coord: { q: -2, r: 0 }, config: { dir: 4, altDir: 1, filterRule: 'even' } },
       { type: 'conveyor', coord: { q: -2, r: -1 }, config: { dir: 0 } },
@@ -2980,6 +3223,21 @@ export const GRADE5_LEVELS: LevelDefinition[] = [
       { type: 'sub1', coord: { q: -2, r: 1 }, config: { dir: 0 } },
       { type: 'conveyor', coord: { q: -1, r: 1 }, config: { dir: 5 } },
       { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+    ],
+    altDemoSolutions: [
+      {
+        label: 'Чётные снизу, нечётные (−1) сверху',
+        description: 'Зеркальное распределение ветвей на левом берегу',
+        blocks: [
+          { type: 'filter', coord: { q: -2, r: 0 }, config: { dir: 1, altDir: 4, filterRule: 'even' } },
+          { type: 'conveyor', coord: { q: -2, r: 1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: -1, r: 1 }, config: { dir: 5 } },
+          { type: 'sub1', coord: { q: -2, r: -1 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: -1, r: -1 }, config: { dir: 1 } },
+          { type: 'conveyor', coord: { q: -1, r: 0 }, config: { dir: 0 } },
+          { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } },
+        ],
+      },
     ],
     verificationRuns: [
       {
