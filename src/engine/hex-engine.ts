@@ -89,6 +89,109 @@ export function createMachineInstance(
   };
 }
 
+export function getMachineFootprint(machine: {
+  type: MachineType;
+  coord: AxialCoord;
+  config: MachineConfig;
+}): AxialCoord[] {
+  if (
+    machine.type === 'sink' &&
+    machine.config.targetPattern &&
+    machine.config.targetPattern.nodes.length > 0
+  ) {
+    return machine.config.targetPattern.nodes.map((n) => ({
+      q: machine.coord.q + n.offset.q,
+      r: machine.coord.r + n.offset.r,
+    }));
+  }
+  return [{ ...machine.coord }];
+}
+
+function addSinkFootprintEntries(
+  sinkFootprintHexes: Map<HexKey, string>,
+  machineId: string,
+  machine: { type: MachineType; coord: AxialCoord; config: MachineConfig },
+) {
+  if (machine.type !== 'sink') return;
+  for (const pad of getMachineFootprint(machine)) {
+    sinkFootprintHexes.set(hexKey(pad), machineId);
+  }
+}
+
+export function getBlockedPlacementInfo(
+  world: SimulationWorld,
+  coord: AxialCoord,
+): { blocked: boolean; reason?: string } {
+  const key = hexKey(coord);
+  if (!world.platformHexes.has(key)) {
+    return { blocked: true, reason: 'Нельзя разместить блок над разломом платформы.' };
+  }
+  if (world.narrowGapHexes.has(key)) {
+    return {
+      blocked: true,
+      reason: 'Над узким разломом нельзя ставить механизм — через него пройдёт только сцепленный полимер (2+ сферы).',
+    };
+  }
+  if (world.sinkFootprintHexes.has(key)) {
+    return {
+      blocked: true,
+      reason: 'Клетка занята посадочной площадкой приёмника — механизмы здесь ставить нельзя.',
+    };
+  }
+  if (world.machines.get(key)?.locked) {
+    return {
+      blocked: true,
+      reason: 'Целевой гекс занят фиксированным модулем уровня.',
+    };
+  }
+  return { blocked: false };
+}
+
+export function validateLevelPlacement(
+  level: LevelDefinition,
+  blocks: Array<{ type: MachineType; coord: AxialCoord; config: MachineConfig }>,
+): string[] {
+  const errors: string[] = [];
+  const baseWorld = createWorldFromLevel(level, []);
+  const seen = new Set<HexKey>();
+  const counts: Partial<Record<MachineType, number>> = {};
+
+  for (const b of blocks) {
+    const key = hexKey(b.coord);
+    if (seen.has(key)) {
+      errors.push(`Дублирующая установка механизма на гексе (${b.coord.q}, ${b.coord.r})`);
+      continue;
+    }
+    seen.add(key);
+
+    if (!baseWorld.platformHexes.has(key)) {
+      errors.push(`Механизм ${b.type} на (${b.coord.q}, ${b.coord.r}) находится вне платформы`);
+    } else if (baseWorld.narrowGapHexes.has(key)) {
+      errors.push(`Механизм ${b.type} на (${b.coord.q}, ${b.coord.r}) установлен над узким разломом`);
+    } else if (baseWorld.sinkFootprintHexes.has(key)) {
+      errors.push(`Механизм ${b.type} на (${b.coord.q}, ${b.coord.r}) перекрывает зону приёмника`);
+    } else if (baseWorld.machines.get(key)?.locked) {
+      errors.push(`Механизм ${b.type} на (${b.coord.q}, ${b.coord.r}) перекрывает фиксированный модуль`);
+    }
+
+    counts[b.type] = (counts[b.type] ?? 0) + 1;
+  }
+
+  if (level.maxTotalBlocks !== undefined && blocks.length > level.maxTotalBlocks) {
+    errors.push(`Превышен общий лимит блоков: ${blocks.length} > ${level.maxTotalBlocks}`);
+  }
+  if (level.partLimits) {
+    for (const [tool, limit] of Object.entries(level.partLimits)) {
+      const used = counts[tool as MachineType] ?? 0;
+      if (limit !== undefined && used > limit) {
+        errors.push(`Превышен лимит ${tool}: ${used} > ${limit}`);
+      }
+    }
+  }
+
+  return errors;
+}
+
 export function createWorldFromLevel(
   level: LevelDefinition,
   playerMachines: Array<{ type: MachineType; coord: AxialCoord; config: MachineConfig }> = [],
@@ -103,6 +206,7 @@ export function createWorldFromLevel(
     platformHexes.add(gk);
   }
   const machines = new Map<HexKey, MachineInstance>();
+  const sinkFootprintHexes = new Map<HexKey, string>();
 
   let machineSeq = 1;
   for (const pm of level.presetMachines) {
@@ -133,15 +237,17 @@ export function createWorldFromLevel(
       }
     }
 
-    machines.set(
-      key,
-      createMachineInstance(`m_${machineSeq++}`, pm.type, pm.coord, pm.locked, cfg),
-    );
+    const inst = createMachineInstance(`m_${machineSeq++}`, pm.type, pm.coord, pm.locked, cfg);
+    machines.set(key, inst);
+    addSinkFootprintEntries(sinkFootprintHexes, inst.id, inst);
   }
 
+  const visitedHexes = new Set<HexKey>();
   for (const um of playerMachines) {
     const key = hexKey(um.coord);
-    if (!platformHexes.has(key) || narrowGapHexes.has(key)) continue;
+    if (!platformHexes.has(key) || narrowGapHexes.has(key) || sinkFootprintHexes.has(key)) {
+      continue;
+    }
     const existing = machines.get(key);
     if (existing?.locked) continue;
     let cfg = um.config;
@@ -164,10 +270,10 @@ export function createWorldFromLevel(
         };
       }
     }
-    machines.set(
-      key,
-      createMachineInstance(`m_${machineSeq++}`, um.type, um.coord, false, cfg),
-    );
+    const inst = createMachineInstance(`m_${machineSeq++}`, um.type, um.coord, false, cfg);
+    machines.set(key, inst);
+    addSinkFootprintEntries(sinkFootprintHexes, inst.id, inst);
+    visitedHexes.add(key);
   }
 
   let requiredDeliveries = level.requiredDeliveries;
@@ -183,19 +289,12 @@ export function createWorldFromLevel(
     }
   }
 
-  const visitedHexes = new Set<HexKey>();
-  for (const um of playerMachines) {
-    const k = hexKey(um.coord);
-    if (platformHexes.has(k)) {
-      visitedHexes.add(k);
-    }
-  }
-
   return {
     tick: 0,
     status: 'idle',
     platformHexes,
     narrowGapHexes,
+    sinkFootprintHexes,
     machines,
     tokens: new Map(),
     bonds: [],
@@ -403,7 +502,7 @@ function addBondCanonical(world: SimulationWorld, idA: string, idB: string): boo
 }
 
 /**
- * Exact graph matching for Sink / Receiver.
+ * Exact graph matching for Sink / Receiver constrained strictly to drawn sink footprint pads.
  */
 export function matchComponentToPattern(
   component: ConnectedComponent,
@@ -411,13 +510,29 @@ export function matchComponentToPattern(
   sinkCoord: AxialCoord,
   pattern: TargetPattern,
   deliveryIdx = 0,
-): { matched: boolean; reason?: string } {
+): { matched: boolean; reason?: string; matchedValues?: number[] } {
   const tokens = component.tokenIds.map((id) => world.tokens.get(id)!);
   if (tokens.length !== pattern.nodes.length) {
     return { matched: false, reason: 'Несовпадение числа звеньев полимера' };
   }
   if (component.bondIndices.length !== pattern.edges.length) {
     return { matched: false, reason: 'Несовпадение структуры связей' };
+  }
+
+  const sinkFootprint = pattern.nodes.map((n) => ({
+    q: sinkCoord.q + n.offset.q,
+    r: sinkCoord.r + n.offset.r,
+  }));
+  const footprintSet = new Set<HexKey>(sinkFootprint.map(hexKey));
+  const tokenCoordKeys = new Set<HexKey>(tokens.map((t) => hexKey(t.coord)));
+  if (
+    tokenCoordKeys.size !== footprintSet.size ||
+    !sinkFootprint.every((f) => tokenCoordKeys.has(hexKey(f)))
+  ) {
+    return {
+      matched: false,
+      reason: 'Звенья полимера выходят за пределы посадочной площадки приёмника',
+    };
   }
 
   const rotationsToTry = pattern.rotationInvariant ? [0, 1, 2, 3, 4, 5] : [0];
@@ -429,109 +544,158 @@ export function matchComponentToPattern(
     bondSet.add(k);
   }
 
+  const expectedForStep = pattern.expectedNodeValues?.[deliveryIdx];
   let lastMismatchReason: string | undefined;
 
   for (const rot of rotationsToTry) {
-    // Map each pattern node index to a matching token at expected rotated world coord
-    const matchedTokens: Token[] = [];
-    let coordsOk = true;
-    for (const node of pattern.nodes) {
-      const rotOffset = rotateAroundPivot(node.offset, { q: 0, r: 0 }, rot);
-      const expectedCoord = {
-        q: sinkCoord.q + rotOffset.q,
-        r: sinkCoord.r + rotOffset.r,
-      };
-      const tok = tokens.find((t) => hexEqual(t.coord, expectedCoord));
-      if (!tok) {
-        coordsOk = false;
-        break;
+    const rot0 = rotateAroundPivot(pattern.nodes[0].offset, { q: 0, r: 0 }, rot);
+    const candidateShifts: AxialCoord[] = [];
+    const seenShifts = new Set<HexKey>();
+    if (pattern.rotationInvariant) {
+      for (const target0 of sinkFootprint) {
+        const shift = {
+          q: target0.q - (sinkCoord.q + rot0.q),
+          r: target0.r - (sinkCoord.r + rot0.r),
+        };
+        const sk = hexKey(shift);
+        if (!seenShifts.has(sk)) {
+          seenShifts.add(sk);
+          candidateShifts.push(shift);
+        }
       }
-      matchedTokens.push(tok);
+    } else {
+      candidateShifts.push({ q: 0, r: 0 });
     }
-    if (!coordsOk) continue;
 
-    // Verify all required edges exist between mapped tokens
-    let edgesOk = true;
-    for (const edge of pattern.edges) {
-      const tA = matchedTokens[edge.fromIdx];
-      const tB = matchedTokens[edge.toIdx];
-      const k = tA.id < tB.id ? `${tA.id}|${tB.id}` : `${tB.id}|${tA.id}`;
-      if (!bondSet.has(k)) {
-        edgesOk = false;
-        break;
+    for (const shift of candidateShifts) {
+      // Map each pattern node index to a matching token on the drawn sink footprint
+      const matchedTokens: Token[] = [];
+      let coordsOk = true;
+      for (const node of pattern.nodes) {
+        const rotOffset = rotateAroundPivot(node.offset, { q: 0, r: 0 }, rot);
+        const expectedCoord = {
+          q: sinkCoord.q + rotOffset.q + shift.q,
+          r: sinkCoord.r + rotOffset.r + shift.r,
+        };
+        if (!footprintSet.has(hexKey(expectedCoord))) {
+          coordsOk = false;
+          break;
+        }
+        const tok = tokens.find((t) => hexEqual(t.coord, expectedCoord));
+        if (!tok) {
+          coordsOk = false;
+          break;
+        }
+        matchedTokens.push(tok);
       }
-    }
-    if (!edgesOk) continue;
+      if (!coordsOk) continue;
 
-    if (pattern.mode === 'exact') {
-      const expectedForStep = pattern.expectedNodeValues?.[deliveryIdx];
-      let valuesOk = true;
-      for (let i = 0; i < pattern.nodes.length; i++) {
-        const reqVal = expectedForStep ? expectedForStep[i] : pattern.nodes[i].value;
-        if (reqVal !== undefined && matchedTokens[i].value !== reqVal) {
-          valuesOk = false;
+      // Verify all required edges exist between mapped tokens
+      let edgesOk = true;
+      for (const edge of pattern.edges) {
+        const tA = matchedTokens[edge.fromIdx];
+        const tB = matchedTokens[edge.toIdx];
+        const k = tA.id < tB.id ? `${tA.id}|${tB.id}` : `${tB.id}|${tA.id}`;
+        if (!bondSet.has(k)) {
+          edgesOk = false;
           break;
         }
       }
-      if (!valuesOk) {
-        lastMismatchReason = 'Значения чисел не совпадают с эталоном';
-        continue;
-      }
-      return { matched: true };
-    }
+      if (!edgesOk) continue;
 
-    if (pattern.mode === 'sum_shape') {
-      const sum = matchedTokens.reduce((acc, t) => acc + t.value, 0);
-      if (pattern.requiredSum !== undefined && sum !== pattern.requiredSum) {
-        lastMismatchReason = `Сумма звеньев равна ${sum}, требуется ${pattern.requiredSum}`;
-        continue;
-      }
-      return { matched: true };
-    }
+      const matchedValues = matchedTokens.map((t) => t.value);
 
-    if (pattern.mode === 'beam_balance') {
-      if (matchedTokens.length === 3) {
-        // Identify hub node (degree 2 in pattern.edges) or default to middle index 1
-        const deg = [0, 0, 0];
-        for (const e of pattern.edges) {
-          deg[e.fromIdx] = (deg[e.fromIdx] ?? 0) + 1;
-          deg[e.toIdx] = (deg[e.toIdx] ?? 0) + 1;
+      if (pattern.mode === 'exact') {
+        let valuesOk = true;
+        for (let i = 0; i < pattern.nodes.length; i++) {
+          const reqVal = expectedForStep ? expectedForStep[i] : pattern.nodes[i].value;
+          if (reqVal !== undefined && matchedTokens[i].value !== reqVal) {
+            valuesOk = false;
+            break;
+          }
         }
-        const hubIdx = deg.indexOf(2) !== -1 ? deg.indexOf(2) : 1;
-        const armIndices = [0, 1, 2].filter((idx) => idx !== hubIdx);
-        const leftVal = matchedTokens[armIndices[0]].value;
-        const rightVal = matchedTokens[armIndices[1]].value;
-        const midVal = matchedTokens[hubIdx].value;
-        if (leftVal !== rightVal) {
-          lastMismatchReason = `Крылья не равны (${leftVal} ≠ ${rightVal})`;
+        if (!valuesOk) {
+          lastMismatchReason = 'Значения чисел не совпадают с эталоном';
           continue;
         }
-        if (midVal !== leftVal + rightVal) {
-          lastMismatchReason = `Центр равен ${midVal}, ожидается сумма крыльев (${leftVal} + ${rightVal} = ${leftVal + rightVal})`;
+        return { matched: true, matchedValues };
+      }
+
+      if (pattern.mode === 'sum_shape') {
+        const sum = matchedTokens.reduce((acc, t) => acc + t.value, 0);
+        if (pattern.requiredSum !== undefined && sum !== pattern.requiredSum) {
+          lastMismatchReason = `Сумма звеньев равна ${sum}, требуется ${pattern.requiredSum}`;
           continue;
         }
-        return { matched: true };
-      }
-      lastMismatchReason = 'Для балки равновесия требуется 3 звена';
-      continue;
-    }
-
-    if (pattern.mode === 'growth_ladder') {
-      const step = pattern.ladderStep;
-      if (!step) return { matched: true };
-      let ladderOk = true;
-      for (let i = 0; i < matchedTokens.length - 1; i++) {
-        const cur = matchedTokens[i].value;
-        const nxt = matchedTokens[i + 1].value;
-        const expectedNext = step.op === 'add' ? cur + step.value : cur * step.value;
-        if (nxt !== expectedNext) {
-          lastMismatchReason = `Шаг роста нарушен: после ${cur} ожидается ${expectedNext}, получено ${nxt}`;
-          ladderOk = false;
-          break;
+        if (expectedForStep) {
+          if (pattern.rotationInvariant) {
+            const sortedGot = [...matchedValues].sort((a, b) => a - b);
+            const sortedExp = [...expectedForStep].sort((a, b) => a - b);
+            if (!sortedGot.every((v, idx) => v === sortedExp[idx])) {
+              lastMismatchReason = `Состав чисел не совпадает с эталоном: получено [${matchedValues.join(', ')}], ожидается [${expectedForStep.join(', ')}]`;
+              continue;
+            }
+          } else if (!matchedValues.every((v, idx) => v === expectedForStep[idx])) {
+            lastMismatchReason = 'Значения чисел не совпадают с эталоном';
+            continue;
+          }
         }
+        return { matched: true, matchedValues };
       }
-      if (!ladderOk) continue;
-      return { matched: true };
+
+      if (pattern.mode === 'beam_balance') {
+        if (matchedTokens.length === 3) {
+          // Identify hub node (degree 2 in pattern.edges) or default to middle index 1
+          const deg = [0, 0, 0];
+          for (const e of pattern.edges) {
+            deg[e.fromIdx] = (deg[e.fromIdx] ?? 0) + 1;
+            deg[e.toIdx] = (deg[e.toIdx] ?? 0) + 1;
+          }
+          const hubIdx = deg.indexOf(2) !== -1 ? deg.indexOf(2) : 1;
+          const armIndices = [0, 1, 2].filter((idx) => idx !== hubIdx);
+          const leftVal = matchedTokens[armIndices[0]].value;
+          const rightVal = matchedTokens[armIndices[1]].value;
+          const midVal = matchedTokens[hubIdx].value;
+          if (leftVal !== rightVal) {
+            lastMismatchReason = `Крылья не равны (${leftVal} ≠ ${rightVal})`;
+            continue;
+          }
+          if (midVal !== leftVal + rightVal) {
+            lastMismatchReason = `Центр равен ${midVal}, ожидается сумма крыльев (${leftVal} + ${rightVal} = ${leftVal + rightVal})`;
+            continue;
+          }
+          if (expectedForStep && !matchedValues.every((v, idx) => v === expectedForStep[idx])) {
+            lastMismatchReason = 'Значения чисел не совпадают с эталоном';
+            continue;
+          }
+          return { matched: true, matchedValues };
+        }
+        lastMismatchReason = 'Для балки равновесия требуется 3 звена';
+        continue;
+      }
+
+      if (pattern.mode === 'growth_ladder') {
+        const step = pattern.ladderStep;
+        if (step) {
+          let ladderOk = true;
+          for (let i = 0; i < matchedTokens.length - 1; i++) {
+            const cur = matchedTokens[i].value;
+            const nxt = matchedTokens[i + 1].value;
+            const expectedNext = step.op === 'add' ? cur + step.value : cur * step.value;
+            if (nxt !== expectedNext) {
+              lastMismatchReason = `Шаг роста нарушен: после ${cur} ожидается ${expectedNext}, получено ${nxt}`;
+              ladderOk = false;
+              break;
+            }
+          }
+          if (!ladderOk) continue;
+        }
+        if (expectedForStep && !matchedValues.every((v, idx) => v === expectedForStep[idx])) {
+          lastMismatchReason = 'Значения чисел не совпадают с эталоном';
+          continue;
+        }
+        return { matched: true, matchedValues };
+      }
     }
   }
 
@@ -1706,6 +1870,74 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
   }
 
   // Phase 5: Delivery & Victory Check
+  const DIRECT_DRIVE_MACHINE_TYPES: ReadonlySet<MachineType> = new Set([
+    'conveyor',
+    'add1',
+    'sub1',
+    'mul2',
+    'div2',
+    'sqrt',
+    'neg',
+    'dup',
+    'adder',
+    'filter',
+    'splitter',
+    'divmod',
+    'halver',
+    'scales',
+    'jumper',
+    'destroyer',
+  ]);
+  const hasNextTickDrive = (compToks: Token[]): boolean => {
+    for (const tok of compToks) {
+      const onMachine = world.machines.get(hexKey(tok.coord));
+      if (onMachine && DIRECT_DRIVE_MACHINE_TYPES.has(onMachine.type)) {
+        return true;
+      }
+    }
+    for (const m of world.machines.values()) {
+      if (m.type === 'pusher') {
+        const target = hexNeighbor(m.coord, m.config.dir);
+        if (compToks.some((t) => hexEqual(t.coord, target))) return true;
+      } else if (m.type === 'magnet') {
+        const d1 = hexNeighbor(m.coord, m.config.dir);
+        const d2 = hexNeighbor(d1, m.config.dir);
+        const d1Busy = Array.from(world.tokens.values()).some((t) => hexEqual(t.coord, d1));
+        if (!d1Busy && compToks.some((t) => hexEqual(t.coord, d2))) return true;
+      } else if (m.type === 'rotator') {
+        const grabHex = hexNeighbor(m.coord, m.config.dir);
+        if (compToks.some((t) => hexEqual(t.coord, grabHex))) return true;
+      } else if (m.type === 'swapper') {
+        const a = hexNeighbor(m.coord, m.config.dir);
+        const b = hexNeighbor(m.coord, oppositeDir(m.config.dir));
+        if (compToks.some((t) => hexEqual(t.coord, a) || hexEqual(t.coord, b))) return true;
+      }
+    }
+    return false;
+  };
+  const hasPendingWelderOrLaserInteraction = (compToks: Token[]): boolean => {
+    let touchesEdgeTool = false;
+    for (const m of world.machines.values()) {
+      if (m.type !== 'welder' && m.type !== 'laser') continue;
+      const other = hexNeighbor(m.coord, m.config.dir);
+      if (compToks.some((t) => hexEqual(t.coord, m.coord) || hexEqual(t.coord, other))) {
+        touchesEdgeTool = true;
+        break;
+      }
+    }
+    if (!touchesEdgeTool) return false;
+    if (world.tokens.size > compToks.length) return true;
+    for (const m of world.machines.values()) {
+      if (m.type === 'spawner') {
+        const seq = m.config.sequence ?? [];
+        if (seq.length > 0 && (m.config.loopSequence || m.state.spawnIndex < seq.length)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
   const postComponents = getConnectedComponents(world);
   for (const comp of postComponents) {
     for (const machine of world.machines.values()) {
@@ -1727,7 +1959,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       const hist = world.sinkDeliveries[sinkId] ?? [];
       const matchRes = matchComponentToPattern(comp, world, machine.coord, pattern, hist.length);
       if (matchRes.matched) {
-        const deliveredVals = compTokens.map((t) => t.value);
+        const deliveredVals = matchRes.matchedValues ?? compTokens.map((t) => t.value);
 
         // If sink has expectedValues sequence, verify expected item
         if (pattern.expectedValues && pattern.expectedValues.length > 0) {
@@ -1796,7 +2028,6 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         });
         break;
       } else {
-        // Reject only if component is completely covering sink footprint OR scalar onto scalar sink with wrong value
         const allFootprintCovered = sinkFootprint.every((f) =>
           compTokens.some((t) => hexEqual(t.coord, f)),
         );
@@ -1804,11 +2035,13 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
           pattern.nodes.length === 1 &&
           compTokens.length === 1 &&
           hexEqual(compTokens[0].coord, machine.coord);
-        if (allFootprintCovered || isScalarSinkWrongVal) {
+        const isStalledMismatch =
+          !hasNextTickDrive(compTokens) && !hasPendingWelderOrLaserInteraction(compTokens);
+        if (allFootprintCovered || isScalarSinkWrongVal || isStalledMismatch) {
           triggerError(
             world,
             `Приёмник отклонил структуру: ${matchRes.reason ?? 'неверный образец'}`,
-            [machine.coord],
+            compTokens.map((t) => t.coord),
             'error',
           );
           return world;

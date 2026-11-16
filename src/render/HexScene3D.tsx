@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { getConnectedComponents } from '../engine/hex-engine';
+import { getConnectedComponents, getMachineFootprint } from '../engine/hex-engine';
 import {
   dirToWorldYaw,
   HEX_SIZE,
@@ -1406,17 +1406,20 @@ export function HexScene3D({
         if (machine.type === 'spawner' || machine.type === 'sink') {
           hasIoSocket = true;
           const sockCol = machine.type === 'spawner' ? pal.accent : pal.accentSecondary;
-          const sockMat = new THREE.MeshBasicMaterial({
-            color: sockCol,
-            transparent: true,
-            opacity: 0.42,
-            polygonOffset: true,
-            polygonOffsetFactor: -1,
-            polygonOffsetUnits: -1,
-          });
-          const sock = new THREE.Mesh(socketRingGeo, sockMat);
-          sock.position.set(w.x, 0.006, w.z);
-          machineGroup.add(sock);
+          for (const pad of getMachineFootprint(machine)) {
+            const pw = hexToWorld(pad);
+            const sockMat = new THREE.MeshBasicMaterial({
+              color: sockCol,
+              transparent: true,
+              opacity: 0.42,
+              polygonOffset: true,
+              polygonOffsetFactor: -1,
+              polygonOffsetUnits: -1,
+            });
+            const sock = new THREE.Mesh(socketRingGeo, sockMat);
+            sock.position.set(pw.x, 0.006, pw.z);
+            machineGroup.add(sock);
+          }
         }
       }
       if (!hasIoSocket) {
@@ -1648,7 +1651,19 @@ export function HexScene3D({
         addInkOutline(tip, inkColor, 0.02);
         tacticalGroup.add(tip);
       } else if (mType === 'sink') {
-        addTacticalHexRing(coord, 0x26b557, 0.065);
+        const wNow = propsRef.current.world;
+        const cKey = hexKey(coord);
+        const sinkId = wNow.sinkFootprintHexes.get(cKey);
+        const sinkMach =
+          wNow.machines.get(cKey) ??
+          (sinkId ? Array.from(wNow.machines.values()).find((m) => m.id === sinkId) : undefined);
+        if (sinkMach) {
+          for (const pad of getMachineFootprint(sinkMach)) {
+            addTacticalHexRing(pad, 0x26b557, 0.065);
+          }
+        } else {
+          addTacticalHexRing(coord, 0x26b557, 0.065);
+        }
       }
     }
 
@@ -1777,12 +1792,16 @@ export function HexScene3D({
           const wSnap = propsRef.current.world;
           const dKey = hexKey(dropCoord);
           const destMachine = wSnap.machines.get(dKey);
+          const isBlockedDrop =
+            !wSnap.platformHexes.has(dKey) ||
+            wSnap.narrowGapHexes.has(dKey) ||
+            wSnap.sinkFootprintHexes.has(dKey) ||
+            Boolean(destMachine?.locked);
           const validDrop =
-            wSnap.platformHexes.has(dKey) &&
-            !destMachine?.locked &&
+            !isBlockedDrop &&
             (!hexEqual(dropCoord, active.fromCoord) ||
               active.currentDir !== active.machine.config.dir);
-          if (validDrop) {
+          if (validDrop || (isBlockedDrop && !hexEqual(dropCoord, active.fromCoord))) {
             propsRef.current.onMoveBlock?.(active.fromCoord, dropCoord, active.currentDir);
           }
         }
@@ -2840,6 +2859,7 @@ export function HexScene3D({
           const isValid =
             wSnap.platformHexes.has(dKey) &&
             !wSnap.narrowGapHexes.has(dKey) &&
+            !wSnap.sinkFootprintHexes.has(dKey) &&
             !destMachine?.locked;
 
           hoverRingMat.color.setHex(isValid ? 0x26b557 : 0xff3b30);
@@ -2880,7 +2900,7 @@ export function HexScene3D({
             ghostKey = nextGhostKey;
           }
           ghostGroup.position.set(dw.x, 0.24 + Math.sin(elapsed * 6) * 0.025, dw.z);
-          ghostGroup.visible = true;
+          ghostGroup.visible = isValid;
 
           if (isValid) {
             activeTacticalSpec = {
@@ -2898,11 +2918,14 @@ export function HexScene3D({
       } else if (!titleMode && hoveredCoord && wSnap.platformHexes.has(hexKey(hoveredCoord))) {
         const hKey = hexKey(hoveredCoord);
         const isNarrowGap = wSnap.narrowGapHexes.has(hKey);
+        const isSinkPad = wSnap.sinkFootprintHexes.has(hKey);
+        const existing = wSnap.machines.get(hKey);
+        const isBlockedTarget = isNarrowGap || isSinkPad || Boolean(existing?.locked);
         const hw = hexToWorld(hoveredCoord);
         const canPlaceTool =
-          Boolean(tool && tool !== 'erase' && tool !== 'select') && !isNarrowGap;
+          Boolean(tool && tool !== 'erase' && tool !== 'select') && !isBlockedTarget;
         hoverRingMat.color.setHex(
-          isNarrowGap && tool && tool !== 'erase' && tool !== 'select' ? 0xff3b30 : 0xffffff,
+          isBlockedTarget && tool && tool !== 'erase' && tool !== 'select' ? 0xff3b30 : 0xffffff,
         );
         hoverRing.position.set(hw.x, 0.025, hw.z);
         hoverRing.visible = true;
@@ -2921,18 +2944,22 @@ export function HexScene3D({
           }
         }
 
-        const existing = wSnap.machines.get(hKey);
-        if (existing) {
+        const sinkPadOwnerId = !existing && isSinkPad ? wSnap.sinkFootprintHexes.get(hKey) : undefined;
+        const sinkPadOwner = sinkPadOwnerId
+          ? Array.from(wSnap.machines.values()).find((m) => m.id === sinkPadOwnerId)
+          : undefined;
+        const tacticalMachine = existing ?? sinkPadOwner;
+        if (tacticalMachine) {
           activeTacticalSpec = {
-            coord: hoveredCoord,
-            mType: existing.type,
-            dir: existing.config.dir,
-            altDir: existing.config.altDir ?? rotateDir(existing.config.dir, 1),
-            rotMode: existing.config.rotMode ?? 'cw',
+            coord: tacticalMachine.coord,
+            mType: tacticalMachine.type,
+            dir: tacticalMachine.config.dir,
+            altDir: tacticalMachine.config.altDir ?? rotateDir(tacticalMachine.config.dir, 1),
+            rotMode: tacticalMachine.config.rotMode ?? 'cw',
           };
         }
 
-        if (canPlaceTool && tool && tool !== 'erase' && tool !== 'select' && !existing?.locked) {
+        if (canPlaceTool && tool && tool !== 'erase' && tool !== 'select') {
           const modeVal = rotMode ?? 'cw';
           const nextGhostKey =
             tool === 'conveyor'

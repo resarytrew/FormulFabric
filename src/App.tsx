@@ -19,6 +19,7 @@ import {
   cloneWorld,
   computeWorldArea,
   createWorldFromLevel,
+  getBlockedPlacementInfo,
   stepSimulation,
   verifyLevelSolution,
 } from './engine/hex-engine';
@@ -65,6 +66,23 @@ function getBlocksSignature(blocks: PlacedBlock[]): string {
     .sort((a, b) => a.coord.q - b.coord.q || a.coord.r - b.coord.r)
     .map((b) => `${b.type}@${b.coord.q},${b.coord.r}:${JSON.stringify(b.config)}`)
     .join('|');
+}
+
+function sanitizeBlocksForLevel(lvl: LevelDefinition, blocks: PlacedBlock[]): PlacedBlock[] {
+  const baseWorld = createWorldFromLevel(lvl, []);
+  const seen = new Set<string>();
+  return blocks
+    .filter((b) => {
+      const k = hexKey(b.coord);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return !getBlockedPlacementInfo(baseWorld, b.coord).blocked;
+    })
+    .map((b) => ({
+      type: b.type,
+      coord: { ...b.coord },
+      config: structuredClone(b.config),
+    }));
 }
 
 type LevelVariantsMap = Record<string, Partial<Record<VariantSlotId, StoredVariant>>>;
@@ -689,7 +707,7 @@ export default function App() {
       setVariantsMap(nextVariants);
 
       const targetBlocks = lvlVars[slot]?.blocks
-        ? structuredClone(lvlVars[slot]!.blocks)
+        ? sanitizeBlocksForLevel(currentLevelRef.current, lvlVars[slot]!.blocks)
         : [];
       setActiveVariant(slot);
       setInspectedCoord(null);
@@ -703,25 +721,18 @@ export default function App() {
     (coord: AxialCoord) => {
       if (appState !== 'playing' || isSimPlaying) return;
       const key = hexKey(coord);
-      if (!worldRef.current.platformHexes.has(key)) {
+      if (selectedTool !== 'select' && selectedTool !== 'erase') {
+        const blockCheck = getBlockedPlacementInfo(worldRef.current, coord);
+        if (blockCheck.blocked) {
+          sound.playError();
+          if (blockCheck.reason) {
+            showBudgetWarning(blockCheck.reason);
+          }
+          return;
+        }
+      } else if (!worldRef.current.platformHexes.has(key)) {
         sound.playError();
         showBudgetWarning('Нельзя разместить блок над разломом платформы.');
-        return;
-      }
-      if (
-        worldRef.current.narrowGapHexes.has(key) &&
-        selectedTool !== 'select' &&
-        selectedTool !== 'erase'
-      ) {
-        sound.playError();
-        showBudgetWarning(
-          'Над узким разломом нельзя ставить механизм — через него пройдёт только сцепленный полимер (2+ сферы).',
-        );
-        return;
-      }
-      const existingMachine = worldRef.current.machines.get(key);
-      if (existingMachine?.locked) {
-        sound.playError();
         return;
       }
 
@@ -858,21 +869,10 @@ export default function App() {
   const handleMoveBlock = useCallback(
     (fromCoord: AxialCoord, toCoord: AxialCoord, newDir?: HexDir) => {
       if (appState !== 'playing' || isSimPlaying) return;
-      const toKey = hexKey(toCoord);
-      if (!worldRef.current.platformHexes.has(toKey)) {
+      const blockCheck = getBlockedPlacementInfo(worldRef.current, toCoord);
+      if (blockCheck.blocked) {
         sound.playError();
-        showBudgetWarning('Нельзя перенести блок за пределы платформы.');
-        return;
-      }
-      if (worldRef.current.narrowGapHexes.has(toKey)) {
-        sound.playError();
-        showBudgetWarning('Над узким разломом нельзя разместить механизм.');
-        return;
-      }
-      const destMachine = worldRef.current.machines.get(toKey);
-      if (destMachine?.locked) {
-        sound.playError();
-        showBudgetWarning('Целевой гекс занят фиксированным модулем уровня.');
+        showBudgetWarning(blockCheck.reason ?? 'Целевой гекс недоступен для размещения.');
         return;
       }
 

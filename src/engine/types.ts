@@ -185,6 +185,8 @@ export interface SimulationWorld {
   platformHexes: Set<HexKey>;
   /** Narrow fissure tiles: single spheres fall through, >=2-node polymers bridge if >=1 node rests on solid ground */
   narrowGapHexes: Set<HexKey>;
+  /** Every hex covered by any sink's targetPattern.nodes footprint mapped to sink machine ID */
+  sinkFootprintHexes: Map<HexKey, string>;
   machines: Map<HexKey, MachineInstance>;
   tokens: Map<string, Token>;
   bonds: BondEdge[];
