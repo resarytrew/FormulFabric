@@ -594,6 +594,7 @@ export function buildIslandUnderbellyAndCables(
   maxRadius: number,
   palette: ThemePalette,
   hasChasm = false,
+  outerWorldR?: number,
 ): THREE.Group {
   const group = new THREE.Group();
 
@@ -604,16 +605,19 @@ export function buildIslandUnderbellyAndCables(
   const cableMat = createCelMaterial(palette.ink, { roughness: 0.52, metalness: 0.35 });
   const amberGlowMat = createCelMaterial(palette.accent, {
     emissive: palette.accent,
-    emissiveIntensity: 0.55,
+    emissiveIntensity: 0.6,
     roughness: 0.28,
   });
   const cyanGlowMat = createCelMaterial(palette.accentSecondary, {
     emissive: palette.accentSecondary,
-    emissiveIntensity: 0.82,
+    emissiveIntensity: 0.85,
     roughness: 0.22,
   });
 
-  const mainRadius = Math.max(3.8, (maxRadius + 1.05) * HEX_SIZE * 1.5);
+  const mainRadius = Math.max(
+    4.4,
+    outerWorldR ? outerWorldR * 0.92 : (maxRadius + 1.35) * HEX_SIZE * 1.55,
+  );
   const topCol = new THREE.Color(palette.cliffTop);
   const midCol = new THREE.Color(palette.cliffSide);
   const deepCol = new THREE.Color(palette.machineBase);
@@ -621,43 +625,43 @@ export function buildIslandUnderbellyAndCables(
   const rockParts: THREE.BufferGeometry[] = [];
 
   if (!hasChasm) {
-    // Upper sculpted rock shelf hugging the hex deck
+    // Upper sculpted rock shelf cradling the multi-tiered hex citadel
     const upperShelf = createFloatingCragKeelGeometry(
-      mainRadius * 0.94,
-      1.95,
-      12,
+      mainRadius * 0.96,
+      2.35,
+      14,
       7,
       topCol,
       midCol,
       midCol,
     );
-    upperShelf.translate(0, -0.34, 0);
+    upperShelf.translate(0, -0.42, 0);
     rockParts.push(bakePart(upperShelf, undefined, true));
     upperShelf.dispose();
   }
 
   // Deep central crag keel
-  const keelDepth = hasChasm ? 4.3 : 4.75;
+  const keelDepth = hasChasm ? 4.8 : 5.4;
   const keel = createFloatingCragKeelGeometry(
     mainRadius * (hasChasm ? 0.58 : 0.72),
     keelDepth,
-    12,
+    14,
     23,
     hasChasm ? midCol : topCol,
     midCol,
     deepCol,
   );
-  keel.translate(0, hasChasm ? -1.45 : -0.82, 0);
+  keel.translate(0, hasChasm ? -1.55 : -0.95, 0);
   rockParts.push(bakePart(keel, undefined, true));
   keel.dispose();
 
-  // 5 sculpted jagged hanging rock spurs around the underbelly
-  for (let i = 0; i < 5; i++) {
-    const a = (i * Math.PI * 2) / 5 + 0.38;
-    const dist = mainRadius * (0.48 + (i % 2) * 0.12);
-    const spurDepth = 2.1 + (i % 3) * 0.75;
+  // 7 sculpted jagged hanging rock spurs around the underbelly
+  for (let i = 0; i < 7; i++) {
+    const a = (i * Math.PI * 2) / 7 + 0.32;
+    const dist = mainRadius * (0.48 + (i % 2) * 0.14);
+    const spurDepth = 2.3 + (i % 3) * 0.85;
     const spur = createFloatingCragKeelGeometry(
-      0.78 + (i % 2) * 0.22,
+      0.86 + (i % 2) * 0.28,
       spurDepth,
       8,
       40 + i,
@@ -670,7 +674,7 @@ export function buildIslandUnderbellyAndCables(
         spur,
         {
           x: Math.cos(a) * dist,
-          y: hasChasm ? -1.3 : -0.78,
+          y: hasChasm ? -1.4 : -0.88,
           z: Math.sin(a) * dist,
           ry: a,
         },
@@ -683,22 +687,26 @@ export function buildIslandUnderbellyAndCables(
   const rockMesh = new THREE.Mesh(mergeBakedParts(rockParts), rockMat);
   group.add(rockMesh);
 
-  // Under-deck steel girder ring + diagonal suspension bracing struts
+  // Under-deck double steel girder rings + diagonal suspension bracing struts
   const steelParts: THREE.BufferGeometry[] = [];
-  const ringR = mainRadius * (hasChasm ? 0.62 : 0.72);
-  const ringY = hasChasm ? -1.4 : -0.92;
-  const girderRing = new THREE.TorusGeometry(ringR, 0.08, 6, 18);
+  const ringR = mainRadius * (hasChasm ? 0.62 : 0.74);
+  const innerRingR = ringR * 0.62;
+  const ringY = hasChasm ? -1.45 : -1.02;
+  const girderRing = new THREE.TorusGeometry(ringR, 0.085, 6, 24);
+  const innerGirder = new THREE.TorusGeometry(innerRingR, 0.065, 6, 18);
   steelParts.push(bakePart(girderRing, { y: ringY, rx: Math.PI / 2 }));
+  steelParts.push(bakePart(innerGirder, { y: ringY - 0.85, rx: Math.PI / 2 }));
   girderRing.dispose();
+  innerGirder.dispose();
 
   for (let i = 0; i < 6; i++) {
     const a = (i * Math.PI) / 3 + Math.PI / 6;
     const strutCurve = new THREE.CatmullRomCurve3([
       new THREE.Vector3(Math.cos(a) * ringR, ringY, Math.sin(a) * ringR),
-      new THREE.Vector3(Math.cos(a) * ringR * 0.45, ringY - 0.95, Math.sin(a) * ringR * 0.45),
-      new THREE.Vector3(0, ringY - 1.65, 0),
+      new THREE.Vector3(Math.cos(a) * ringR * 0.52, ringY - 1.0, Math.sin(a) * ringR * 0.52),
+      new THREE.Vector3(0, ringY - 1.85, 0),
     ]);
-    const strutGeo = new THREE.TubeGeometry(strutCurve, 8, 0.055, 6, false);
+    const strutGeo = new THREE.TubeGeometry(strutCurve, 8, 0.058, 6, false);
     steelParts.push(bakePart(strutGeo));
     strutGeo.dispose();
   }
@@ -706,8 +714,8 @@ export function buildIslandUnderbellyAndCables(
   group.add(trussMesh);
 
   // Central magnetic stabilizer gimbal & spinning luminous core beneath the keel
-  const coreY = hasChasm ? -3.05 : -2.55;
-  const gimbal = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.055, 8, 18), trimSteelMat);
+  const coreY = hasChasm ? -3.3 : -2.85;
+  const gimbal = new THREE.Mesh(new THREE.TorusGeometry(0.76, 0.06, 8, 20), trimSteelMat);
   gimbal.position.y = coreY;
   gimbal.rotation.x = 0.45;
   group.add(gimbal);
@@ -716,38 +724,38 @@ export function buildIslandUnderbellyAndCables(
   coreGroup.position.y = coreY;
   coreGroup.userData.sceneryAnim = 'spinY';
   coreGroup.userData.spinSpeed = 1.25;
-  const coreOct = new THREE.Mesh(new THREE.OctahedronGeometry(0.32, 0), cyanGlowMat);
-  coreOct.scale.set(0.85, 1.35, 0.85);
-  const coreRing = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.038, 6, 16), trimSteelMat);
+  const coreOct = new THREE.Mesh(new THREE.OctahedronGeometry(0.38, 0), cyanGlowMat);
+  coreOct.scale.set(0.85, 1.4, 0.85);
+  const coreRing = new THREE.Mesh(new THREE.TorusGeometry(0.54, 0.042, 6, 18), trimSteelMat);
   coreRing.rotation.x = Math.PI / 2;
   coreGroup.add(coreOct, coreRing);
   group.add(coreGroup);
 
-  // 4 hanging catenary cables & glowing survey weights
+  // 6 hanging catenary cables & glowing survey weights
   const cableParts: THREE.BufferGeometry[] = [];
   const weightParts: THREE.BufferGeometry[] = [];
   const weightCapParts: THREE.BufferGeometry[] = [];
-  for (let c = 0; c < 4; c++) {
-    const a0 = c * 1.57 + 0.45;
-    const a1 = a0 + 0.56;
-    const r = mainRadius * 0.84;
-    const p0 = new THREE.Vector3(Math.cos(a0) * r, -0.72, Math.sin(a0) * r);
+  for (let c = 0; c < 6; c++) {
+    const a0 = (c * Math.PI * 2) / 6 + 0.35;
+    const a1 = a0 + 0.48;
+    const r = mainRadius * 0.86;
+    const p0 = new THREE.Vector3(Math.cos(a0) * r, -0.78, Math.sin(a0) * r);
     const pMid = new THREE.Vector3(
-      Math.cos((a0 + a1) * 0.5) * (r + 0.42),
-      -2.35 - (c % 2) * 0.55,
-      Math.sin((a0 + a1) * 0.5) * (r + 0.42),
+      Math.cos((a0 + a1) * 0.5) * (r + 0.44),
+      -2.45 - (c % 2) * 0.6,
+      Math.sin((a0 + a1) * 0.5) * (r + 0.44),
     );
-    const p1 = new THREE.Vector3(Math.cos(a1) * (r * 0.68), -1.75, Math.sin(a1) * (r * 0.68));
+    const p1 = new THREE.Vector3(Math.cos(a1) * (r * 0.68), -1.85, Math.sin(a1) * (r * 0.68));
     const curve = new THREE.CatmullRomCurve3([p0, pMid, p1]);
     const cableGeo = new THREE.TubeGeometry(curve, 12, 0.036, 6, false);
     cableParts.push(bakePart(cableGeo));
     cableGeo.dispose();
 
-    const lanternGlass = new THREE.CylinderGeometry(0.072, 0.072, 0.14, 8);
+    const lanternGlass = new THREE.CylinderGeometry(0.075, 0.075, 0.15, 8);
     weightParts.push(bakePart(lanternGlass, { x: pMid.x, y: pMid.y - 0.05, z: pMid.z }));
     lanternGlass.dispose();
 
-    const lanternHood = new THREE.CylinderGeometry(0.04, 0.11, 0.09, 8);
+    const lanternHood = new THREE.CylinderGeometry(0.042, 0.115, 0.095, 8);
     weightCapParts.push(bakePart(lanternHood, { x: pMid.x, y: pMid.y + 0.06, z: pMid.z }));
     lanternHood.dispose();
   }
@@ -1972,3 +1980,794 @@ export function buildScenicValleyEnvironment(palette: ThemePalette): {
 
   return { group, waterMaterial };
 }
+
+/**
+ * Cushioned beveled hex meadow cap seated atop outer botanical terrace columns.
+ */
+export function createTerraceTurfCapGeometry(): THREE.BufferGeometry {
+  const shape = createHexShape(HEX_SIZE * 0.905);
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth: 0.075,
+    bevelEnabled: true,
+    bevelThickness: 0.042,
+    bevelSize: 0.048,
+    bevelSegments: 2,
+  });
+  geo.rotateX(-Math.PI / 2);
+  geo.translate(0, -0.02, 0);
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+/**
+ * Sleek chamfered glowing cornice collar band hugging terrace step transitions.
+ */
+export function createTerraceTrimRingGeometry(): THREE.BufferGeometry {
+  const outer = createHexShape(HEX_SIZE * 0.935);
+  const inner = createHexShape(HEX_SIZE * 0.84);
+  outer.holes.push(inner);
+  const geo = new THREE.ExtrudeGeometry(outer, {
+    depth: 0.036,
+    bevelEnabled: false,
+  });
+  geo.rotateX(-Math.PI / 2);
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+/**
+ * Carved stone citadel parapet & twin corner bollards mounted on upper masonry ledges.
+ */
+export function createTerraceParapetGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const wall = new THREE.BoxGeometry(HEX_SIZE * 0.86, 0.16, 0.12);
+  const coping = new THREE.BoxGeometry(HEX_SIZE * 0.92, 0.055, 0.16);
+  const post = new THREE.CylinderGeometry(0.085, 0.1, 0.28, 6);
+  const cap = new THREE.CylinderGeometry(0.04, 0.1, 0.07, 6);
+
+  parts.push(
+    bakePart(wall, { y: 0.08, z: -HEX_SIZE * 0.62 }),
+    bakePart(coping, { y: 0.18, z: -HEX_SIZE * 0.62 }),
+    bakePart(post, { x: -HEX_SIZE * 0.42, y: 0.14, z: -HEX_SIZE * 0.62 }),
+    bakePart(post, { x: HEX_SIZE * 0.42, y: 0.14, z: -HEX_SIZE * 0.62 }),
+    bakePart(cap, { x: -HEX_SIZE * 0.42, y: 0.31, z: -HEX_SIZE * 0.62 }),
+    bakePart(cap, { x: HEX_SIZE * 0.42, y: 0.31, z: -HEX_SIZE * 0.62 }),
+  );
+  wall.dispose();
+  coping.dispose();
+  post.dispose();
+  cap.dispose();
+  return mergeBakedParts(parts);
+}
+
+/**
+ * Animated cascading sky-waterfall ribbon shader with foam streaks and shimmering crest.
+ */
+export function createWaterfallShaderMaterial(
+  riverColor: number,
+  highlightColor: number,
+  glowColor: number,
+): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uWaterColor: { value: new THREE.Color(riverColor) },
+      uFoamColor: { value: new THREE.Color(highlightColor) },
+      uGlowColor: { value: new THREE.Color(glowColor) },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform vec3 uWaterColor;
+      uniform vec3 uFoamColor;
+      uniform vec3 uGlowColor;
+      varying vec2 vUv;
+
+      void main() {
+        float flow = vUv.x * 5.0 - uTime * 2.2;
+        float streakA = smoothstep(0.55, 0.95, sin(vUv.y * 22.0 + sin(flow * 1.4)) * 0.5 + 0.5);
+        float streakB = smoothstep(0.62, 0.98, sin(vUv.y * 36.0 - flow * 2.1 + 1.7) * 0.5 + 0.5);
+        float cascade = smoothstep(0.35, 0.98, sin(flow * 3.4 + vUv.y * 7.0) * 0.5 + 0.5);
+
+        float crestFoam = smoothstep(0.18, 0.0, vUv.x) * 0.85;
+        float plungeMist = smoothstep(0.72, 1.0, vUv.x);
+
+        vec3 col = mix(uWaterColor, uGlowColor, 0.32 + cascade * 0.25);
+        col = mix(col, uFoamColor, clamp(streakA * 0.45 + streakB * 0.35 + crestFoam + plungeMist * 0.75, 0.0, 1.0));
+
+        float edgeFade = smoothstep(0.0, 0.14, vUv.y) * smoothstep(1.0, 0.86, vUv.y);
+        float bottomFade = 1.0 - smoothstep(0.8, 1.0, vUv.x);
+        float alpha = clamp((0.78 + crestFoam * 0.2) * edgeFade * bottomFade, 0.0, 0.94);
+        gl_FragColor = vec4(col, alpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+}
+
+/**
+ * Hero Celestial Brass Astrolabe & Observatory Cupola crowning the NW upper acropolis bluff.
+ */
+export function buildBrassAstrolabeObservatory(palette: ThemePalette): THREE.Group {
+  const group = new THREE.Group();
+  const stoneDarkMat = createCelMaterial(palette.cliffSide, { roughness: 0.84, metalness: 0.08 });
+  const stoneTrimMat = createCelMaterial(palette.machineTop, { roughness: 0.58, metalness: 0.18 });
+  const brassMat = createCelMaterial(0xeab308, { roughness: 0.34, metalness: 0.62 });
+  const copperDomeMat = createCelMaterial(
+    new THREE.Color(palette.accentSecondary).lerp(new THREE.Color(palette.machineTop), 0.35).getHex(),
+    { roughness: 0.44, metalness: 0.35 },
+  );
+  const glowMat = createCelMaterial(palette.accentSecondary, {
+    emissive: palette.accentSecondary,
+    emissiveIntensity: 0.95,
+    roughness: 0.18,
+  });
+
+  const darkParts: THREE.BufferGeometry[] = [];
+  const trimParts: THREE.BufferGeometry[] = [];
+
+  // Stepped octagonal foundation & inward stair apron
+  const baseHex = new THREE.CylinderGeometry(0.84, 0.94, 0.22, 6);
+  const midPlinth = new THREE.CylinderGeometry(0.66, 0.76, 0.18, 8);
+  const stepA = new THREE.BoxGeometry(0.64, 0.08, 0.22);
+  const stepB = new THREE.BoxGeometry(0.52, 0.08, 0.16);
+  darkParts.push(
+    bakePart(baseHex, { y: 0.11 }),
+    bakePart(stepA, { y: 0.04, z: 0.82 }),
+    bakePart(stepB, { y: 0.12, z: 0.72 }),
+  );
+  trimParts.push(bakePart(midPlinth, { y: 0.3 }));
+  baseHex.dispose();
+  midPlinth.dispose();
+  stepA.dispose();
+  stepB.dispose();
+
+  // 6 slender colonnade pillars & upper entablature cornice
+  const colGeo = new THREE.CylinderGeometry(0.062, 0.076, 0.72, 6);
+  for (let i = 0; i < 6; i++) {
+    const a = (i * Math.PI) / 3;
+    trimParts.push(
+      bakePart(colGeo, { x: Math.cos(a) * 0.54, y: 0.74, z: Math.sin(a) * 0.54 }),
+    );
+  }
+  colGeo.dispose();
+
+  const cornice = new THREE.CylinderGeometry(0.68, 0.62, 0.14, 8);
+  trimParts.push(bakePart(cornice, { y: 1.14 }));
+  cornice.dispose();
+
+  // Central glowing sanctuary prism column
+  const coreLight = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.26, 0.64, 8), glowMat);
+  coreLight.position.y = 0.72;
+  coreLight.castShadow = false;
+
+  // Dome cupola & skylight oculus collar
+  const cupola = new THREE.Mesh(
+    new THREE.SphereGeometry(0.56, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.46),
+    copperDomeMat,
+  );
+  cupola.position.y = 1.18;
+  cupola.castShadow = true;
+
+  const brassParts: THREE.BufferGeometry[] = [];
+  const oculusRim = new THREE.TorusGeometry(0.26, 0.036, 8, 16);
+  const archRib = new THREE.TorusGeometry(0.56, 0.025, 6, 16, Math.PI);
+  brassParts.push(
+    bakePart(oculusRim, { y: 1.68, rx: Math.PI / 2 }),
+    bakePart(archRib, { y: 1.18 }),
+    bakePart(archRib, { y: 1.18, ry: Math.PI / 2 }),
+  );
+  oculusRim.dispose();
+  archRib.dispose();
+
+  group.add(
+    new THREE.Mesh(mergeBakedParts(darkParts), stoneDarkMat),
+    new THREE.Mesh(mergeBakedParts(trimParts), stoneTrimMat),
+    coreLight,
+    cupola,
+    new THREE.Mesh(mergeBakedParts(brassParts), brassMat),
+  );
+
+  // Rotating 3-ring Celestial Brass Armillary Astrolabe crowning the dome
+  const astroPivot = new THREE.Group();
+  astroPivot.position.y = 2.08;
+
+  const outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.026, 8, 22), brassMat);
+  outerRing.rotation.x = 0.42;
+  outerRing.userData.sceneryAnim = 'spinY';
+  outerRing.userData.spinSpeed = 0.55;
+
+  const midRing = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.022, 8, 20), brassMat);
+  midRing.rotation.z = 0.58;
+  midRing.userData.sceneryAnim = 'spinZ';
+  midRing.userData.spinSpeed = -0.78;
+
+  const starGem = new THREE.Mesh(new THREE.OctahedronGeometry(0.14, 0), glowMat);
+  starGem.scale.set(0.85, 1.35, 0.85);
+  starGem.userData.sceneryAnim = 'spinY';
+  starGem.userData.spinSpeed = 1.8;
+
+  astroPivot.add(outerRing, midRing, starGem);
+  group.add(astroPivot);
+
+  return group;
+}
+
+/**
+ * Crystal Spring Pool & Cascading Animated Sky-Waterfall pouring off the NE cliff edge.
+ */
+export function buildCrystalSpringWaterfall(palette: ThemePalette): {
+  group: THREE.Group;
+  waterfallMaterial: THREE.ShaderMaterial;
+} {
+  const group = new THREE.Group();
+  const stoneMat = createCelMaterial(palette.cliffTop, { roughness: 0.84, metalness: 0.06 });
+  const mossMat = createCelMaterial(palette.valleyGrass, { roughness: 0.82, metalness: 0.02 });
+  const trimMat = createCelMaterial(palette.machineTop, { roughness: 0.52, metalness: 0.25 });
+  const glowMat = createCelMaterial(palette.accentSecondary, {
+    emissive: palette.accentSecondary,
+    emissiveIntensity: 0.85,
+    roughness: 0.2,
+  });
+  const waterfallMaterial = createWaterfallShaderMaterial(
+    palette.valleyRiver,
+    palette.valleyRiverHighlight,
+    palette.accentSecondary,
+  );
+
+  // Carved stone spring basin rim + mossy flanking boulders
+  const rimRing = new THREE.CylinderGeometry(0.82, 0.92, 0.22, 8, 1, true);
+  const rimLip = new THREE.TorusGeometry(0.82, 0.095, 6, 14);
+  const weirL = new THREE.BoxGeometry(0.14, 0.22, 0.58);
+  const weirR = new THREE.BoxGeometry(0.14, 0.22, 0.58);
+  const stoneGeo = mergeBakedParts([
+    bakePart(rimRing, { y: 0.11 }),
+    bakePart(rimLip, { y: 0.22, rx: Math.PI / 2 }),
+    bakePart(weirL, { x: -0.28, y: 0.14, z: 0.82 }),
+    bakePart(weirR, { x: 0.28, y: 0.14, z: 0.82 }),
+  ]);
+  rimRing.dispose();
+  rimLip.dispose();
+  weirL.dispose();
+  weirR.dispose();
+  group.add(new THREE.Mesh(stoneGeo, stoneMat));
+
+  // Mossy rock accents & crystal spring guardian shard
+  const boulderA = new THREE.Mesh(createBoulderGeometry(0.24, 14), mossMat);
+  boulderA.position.set(-0.62, 0.18, -0.35);
+  const boulderB = new THREE.Mesh(createBoulderGeometry(0.2, 29), stoneMat);
+  boulderB.position.set(0.64, 0.16, -0.22);
+  const springCrystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), glowMat);
+  springCrystal.position.set(-0.35, 0.34, -0.58);
+  springCrystal.scale.set(0.7, 1.85, 0.7);
+  group.add(boulderA, boulderB, springCrystal);
+
+  // Miniature arched stone footbridge across rear of spring pool
+  const bridgeArch = new THREE.Mesh(
+    new THREE.TorusGeometry(0.46, 0.065, 6, 12, Math.PI),
+    trimMat,
+  );
+  bridgeArch.position.set(0, 0.12, -0.15);
+  group.add(bridgeArch);
+
+  // Glowing spring water basin surface + animated cascading waterfall ribbon
+  const poolDisc = new THREE.Mesh(new THREE.CircleGeometry(0.76, 14), glowMat);
+  poolDisc.rotation.x = -Math.PI / 2;
+  poolDisc.position.y = 0.18;
+  group.add(poolDisc);
+
+  const fallCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 0.17, 0.18),
+    new THREE.Vector3(0, 0.14, 0.88),
+    new THREE.Vector3(0, -0.28, 1.24),
+    new THREE.Vector3(0, -2.1, 1.46),
+    new THREE.Vector3(0, -4.4, 1.56),
+  ]);
+  const fallRibbon = new THREE.Mesh(
+    createRiverRibbonGeometry(fallCurve, 22, 0.28),
+    waterfallMaterial,
+  );
+  fallRibbon.renderOrder = 2;
+  group.add(fallRibbon);
+
+  // Animated rising mist puffs at cliff lip & plunge fade-out
+  const mistMat = createCelMaterial(palette.cloudTop, {
+    roughness: 0.95,
+    metalness: 0,
+    transparent: true,
+    opacity: 0.56,
+  });
+  for (let m = 0; m < 4; m++) {
+    const puff = new THREE.Mesh(new THREE.IcosahedronGeometry(0.18 + (m % 2) * 0.06, 1), mistMat);
+    puff.position.set((m - 1.5) * 0.16, -3.9 - (m % 2) * 0.25, 1.54);
+    puff.userData.sceneryAnim = 'mistPuff';
+    puff.userData.baseY = puff.position.y;
+    puff.userData.phase = m * 1.4;
+    group.add(puff);
+  }
+
+  return { group, waterfallMaterial };
+}
+
+/**
+ * Levitating Crystal Conduit Pylon with bronze cradle tripod and bobbing/spinning prism.
+ */
+export function buildLevitatingCrystalPylon(palette: ThemePalette, phase = 0): THREE.Group {
+  const group = new THREE.Group();
+  const baseMat = createCelMaterial(palette.machineBase, { roughness: 0.56, metalness: 0.35 });
+  const trimMat = createCelMaterial(palette.machineTop, { roughness: 0.38, metalness: 0.45 });
+  const glowMat = createCelMaterial(palette.accentSecondary, {
+    emissive: palette.accentSecondary,
+    emissiveIntensity: 0.95,
+    roughness: 0.18,
+  });
+
+  const baseParts: THREE.BufferGeometry[] = [];
+  const trimParts: THREE.BufferGeometry[] = [];
+  const plinth = new THREE.CylinderGeometry(0.32, 0.4, 0.14, 6);
+  const runeCollar = new THREE.TorusGeometry(0.28, 0.032, 6, 12);
+  baseParts.push(bakePart(plinth, { y: 0.07 }));
+  trimParts.push(bakePart(runeCollar, { y: 0.16, rx: Math.PI / 2 }));
+  plinth.dispose();
+  runeCollar.dispose();
+
+  const prong = new THREE.BoxGeometry(0.065, 0.46, 0.085);
+  for (let i = 0; i < 3; i++) {
+    const a = (i * Math.PI * 2) / 3;
+    baseParts.push(
+      bakePart(prong, {
+        x: Math.cos(a) * 0.22,
+        y: 0.34,
+        z: Math.sin(a) * 0.22,
+        ry: -a,
+        rz: 0.24,
+      }),
+    );
+  }
+  prong.dispose();
+
+  group.add(
+    new THREE.Mesh(mergeBakedParts(baseParts), baseMat),
+    new THREE.Mesh(mergeBakedParts(trimParts), trimMat),
+  );
+
+  // Hovering spinning energy prism + halo ring
+  const floatNode = new THREE.Group();
+  floatNode.position.y = 0.88;
+  floatNode.userData.sceneryAnim = 'bobSpin';
+  floatNode.userData.baseY = 0.88;
+  floatNode.userData.phase = phase;
+
+  const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), glowMat);
+  gem.scale.set(0.78, 1.55, 0.78);
+  const halo = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.022, 6, 16), trimMat);
+  halo.rotation.x = Math.PI / 2 + 0.32;
+  floatNode.add(gem, halo);
+  group.add(floatNode);
+
+  return group;
+}
+
+/**
+ * Carved stone garden archway pergola with twin hanging warm amber lanterns.
+ */
+export function buildStoneArchPergola(palette: ThemePalette): THREE.Group {
+  const group = new THREE.Group();
+  const stoneMat = createCelMaterial(palette.cliffTop, { roughness: 0.82, metalness: 0.08 });
+  const trimMat = createCelMaterial(palette.machineTop, { roughness: 0.56, metalness: 0.22 });
+  const amberMat = createCelMaterial(palette.accent, {
+    emissive: palette.accent,
+    emissiveIntensity: 0.9,
+    roughness: 0.22,
+  });
+
+  const stoneParts: THREE.BufferGeometry[] = [];
+  const trimParts: THREE.BufferGeometry[] = [];
+
+  const plinth = new THREE.BoxGeometry(0.24, 0.14, 0.24);
+  const col = new THREE.CylinderGeometry(0.075, 0.095, 0.82, 6);
+  const beam = new THREE.BoxGeometry(1.18, 0.11, 0.2);
+  const ridgeCap = new THREE.BoxGeometry(1.34, 0.075, 0.24);
+
+  stoneParts.push(
+    bakePart(plinth, { x: -0.44, y: 0.07 }),
+    bakePart(plinth, { x: 0.44, y: 0.07 }),
+    bakePart(col, { x: -0.44, y: 0.55 }),
+    bakePart(col, { x: 0.44, y: 0.55 }),
+  );
+  trimParts.push(
+    bakePart(beam, { y: 1.0 }),
+    bakePart(ridgeCap, { y: 1.1 }),
+  );
+  plinth.dispose();
+  col.dispose();
+  beam.dispose();
+  ridgeCap.dispose();
+
+  const glowParts: THREE.BufferGeometry[] = [];
+  const lamp = new THREE.CylinderGeometry(0.052, 0.052, 0.12, 6);
+  const chain = new THREE.CylinderGeometry(0.014, 0.014, 0.16, 4);
+  for (const lx of [-0.24, 0.24]) {
+    trimParts.push(bakePart(chain, { x: lx, y: 0.88 }));
+    glowParts.push(bakePart(lamp, { x: lx, y: 0.78 }));
+  }
+  lamp.dispose();
+  chain.dispose();
+
+  group.add(
+    new THREE.Mesh(mergeBakedParts(stoneParts), stoneMat),
+    new THREE.Mesh(mergeBakedParts(trimParts), trimMat),
+    new THREE.Mesh(mergeBakedParts(glowParts), amberMat),
+  );
+  return group;
+}
+
+/**
+ * Sky Wind-Vane Turret with tapered masonry base and rotating 4-sail turbine rotor.
+ */
+export function buildSkyWindVaneTower(palette: ThemePalette, phase = 0): THREE.Group {
+  const group = new THREE.Group();
+  const baseMat = createCelMaterial(palette.cliffSide, { roughness: 0.8, metalness: 0.12 });
+  const trimMat = createCelMaterial(palette.machineTop, { roughness: 0.44, metalness: 0.35 });
+  const sailMat = createCelMaterial(0xf8fafc, { roughness: 0.65, metalness: 0.05 });
+  const brassMat = createCelMaterial(palette.accent, { roughness: 0.35, metalness: 0.55 });
+
+  const baseParts: THREE.BufferGeometry[] = [];
+  const trimParts: THREE.BufferGeometry[] = [];
+  const foot = new THREE.CylinderGeometry(0.32, 0.42, 0.24, 6);
+  const shaft = new THREE.CylinderGeometry(0.2, 0.3, 0.92, 6);
+  const roof = new THREE.CylinderGeometry(0.02, 0.28, 0.3, 6);
+  baseParts.push(bakePart(foot, { y: 0.12 }), bakePart(shaft, { y: 0.68 }));
+  trimParts.push(bakePart(roof, { y: 1.28 }));
+  foot.dispose();
+  shaft.dispose();
+  roof.dispose();
+
+  group.add(
+    new THREE.Mesh(mergeBakedParts(baseParts), baseMat),
+    new THREE.Mesh(mergeBakedParts(trimParts), trimMat),
+  );
+
+  // Rotating 4-sail windmill rotor mounted cleanly on front axle
+  const rotor = new THREE.Group();
+  rotor.position.set(0, 1.04, 0.24);
+  rotor.userData.sceneryAnim = 'spinZ';
+  rotor.userData.spinSpeed = 0.85 + (phase % 3) * 0.15;
+
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.14, 8), brassMat);
+  hub.rotation.x = Math.PI / 2;
+  rotor.add(hub);
+
+  const sparGeo = new THREE.BoxGeometry(0.036, 0.56, 0.03);
+  const sailGeo = new THREE.BoxGeometry(0.16, 0.38, 0.018);
+  const sparParts: THREE.BufferGeometry[] = [];
+  const sailParts: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 4; i++) {
+    const a = (i * Math.PI) / 2 + 0.35;
+    sparParts.push(
+      bakePart(sparGeo, {
+        x: Math.cos(a) * 0.28,
+        y: Math.sin(a) * 0.28,
+        rz: a - Math.PI / 2,
+      }),
+    );
+    sailParts.push(
+      bakePart(sailGeo, {
+        x: Math.cos(a) * 0.35 - Math.sin(a) * 0.07,
+        y: Math.sin(a) * 0.35 + Math.cos(a) * 0.07,
+        ry: 0.22,
+        rz: a - Math.PI / 2,
+      }),
+    );
+  }
+  sparGeo.dispose();
+  sailGeo.dispose();
+  rotor.add(
+    new THREE.Mesh(mergeBakedParts(sparParts), brassMat),
+    new THREE.Mesh(mergeBakedParts(sailParts), sailMat),
+  );
+  group.add(rotor);
+
+  return group;
+}
+
+/**
+ * Second botanical archetype: graceful wind-swept blossom bonsai tree
+ * contrasting warm sakura/coral/amber blooms against dark slate and emerald moss.
+ */
+export function buildBlossomBonsaiGroup(palette: ThemePalette, seed = 0): THREE.Group {
+  const tree = new THREE.Group();
+  const trunkMat = createCelMaterial(0x5e3e2d, { roughness: 0.84, metalness: 0.02 });
+  const stoneMat = createCelMaterial(palette.machineTop, { roughness: 0.72, metalness: 0.1 });
+  const turfMat = createCelMaterial(palette.valleyGrass, { roughness: 0.82 });
+
+  const blossomPalette =
+    palette.id === 'mono'
+      ? [0xfbbf24, 0xf59e0b, 0xfde68a]
+      : palette.id === 'emerald'
+        ? [0xf4a261, 0xf7b288, 0xfad2b4]
+        : [0xf48fb1, 0xf8bbd0, 0xf06292];
+
+  const planterShape = createHexShape(0.35);
+  const planterGeo = new THREE.ExtrudeGeometry(planterShape, {
+    depth: 0.085,
+    bevelEnabled: true,
+    bevelThickness: 0.02,
+    bevelSize: 0.02,
+    bevelSegments: 1,
+  });
+  planterGeo.rotateX(-Math.PI / 2);
+  const planter = new THREE.Mesh(planterGeo, stoneMat);
+  planter.position.y = 0.015;
+  planter.receiveShadow = true;
+  tree.add(planter);
+
+  const moss = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.31, 0.065, 10), turfMat);
+  moss.position.y = 0.105;
+  tree.add(moss);
+
+  const sway = seed % 2 === 0 ? 1 : -1;
+  const trunkCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 0.1, 0),
+    new THREE.Vector3(-sway * 0.07, 0.32, 0.04),
+    new THREE.Vector3(sway * 0.05, 0.56, -0.02),
+    new THREE.Vector3(sway * 0.14, 0.76, 0.03),
+  ]);
+  const bCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-sway * 0.02, 0.42, 0.02),
+    new THREE.Vector3(-sway * 0.18, 0.54, -0.04),
+    new THREE.Vector3(-sway * 0.27, 0.62, -0.06),
+  ]);
+  const tGeo = new THREE.TubeGeometry(trunkCurve, 8, 0.054, 7, false);
+  const bGeo = new THREE.TubeGeometry(bCurve, 6, 0.032, 6, false);
+  const woodMesh = new THREE.Mesh(
+    mergeBakedParts([bakePart(tGeo), bakePart(bGeo)]),
+    trunkMat,
+  );
+  tGeo.dispose();
+  bGeo.dispose();
+  woodMesh.castShadow = true;
+  tree.add(woodMesh);
+
+  const crownMat = createCelMaterial(0xffffff, {
+    roughness: 0.72,
+    metalness: 0,
+    emissive: blossomPalette[0],
+    emissiveIntensity: 0.08,
+  });
+  crownMat.vertexColors = true;
+
+  const puffs: Array<[number, number, number, number]> = [
+    [sway * 0.15, 0.8, 0.03, 0.28],
+    [-sway * 0.27, 0.63, -0.06, 0.22],
+    [0.02, 0.68, 0.16, 0.19],
+    [sway * 0.24, 0.9, -0.05, 0.17],
+  ];
+  const puffParts: THREE.BufferGeometry[] = [];
+  puffs.forEach(([px, py, pz, r], idx) => {
+    const col = new THREE.Color(blossomPalette[idx % blossomPalette.length]);
+    const puff = new THREE.IcosahedronGeometry(r, 1);
+    const nonIdx = puff.index ? puff.toNonIndexed() : puff.clone();
+    puff.dispose();
+    const pos = nonIdx.getAttribute('position') as THREE.BufferAttribute;
+    const cols = new Float32Array(pos.count * 3);
+    for (let v = 0; v < pos.count; v++) {
+      const vx = pos.getX(v);
+      const vy = pos.getY(v);
+      const vz = pos.getZ(v);
+      const n = hash2d(Math.round(vx * 50), Math.round(vz * 50), seed + idx + 19);
+      pos.setXYZ(v, vx * (1.08 + n * 0.16), vy * 0.72, vz * (1.08 + n * 0.16));
+      const shade = 0.9 + (vy > 0 ? 0.14 : 0) + n * 0.06;
+      cols[v * 3] = col.r * shade;
+      cols[v * 3 + 1] = col.g * shade;
+      cols[v * 3 + 2] = col.b * shade;
+    }
+    nonIdx.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    nonIdx.computeVertexNormals();
+    puffParts.push(bakePart(nonIdx, { x: px, y: py, z: pz }, true));
+    nonIdx.dispose();
+  });
+
+  const canopy = new THREE.Mesh(mergeBakedParts(puffParts), crownMat);
+  canopy.castShadow = true;
+  canopy.receiveShadow = true;
+  tree.add(canopy);
+  return tree;
+}
+
+/**
+ * Cluster of luminous faceted crystal prisms erupting from a mossy stone base.
+ */
+export function buildCrystalOutcropGroup(palette: ThemePalette, seed = 0): THREE.Group {
+  const group = new THREE.Group();
+  const rockMat = createCelMaterial(palette.cliffSide, { roughness: 0.86, metalness: 0.06 });
+  const glowMat = createCelMaterial(palette.accentSecondary, {
+    emissive: palette.accentSecondary,
+    emissiveIntensity: 0.78,
+    roughness: 0.22,
+    metalness: 0.12,
+  });
+
+  const rock = new THREE.Mesh(createBoulderGeometry(0.28, seed + 7), rockMat);
+  rock.scale.set(1.2, 0.75, 1.1);
+  group.add(rock);
+
+  const shardSpecs: Array<[number, number, number, number, number, number]> = [
+    [0, 0.34, 0, 0.11, 0.56, 0.12],
+    [-0.14, 0.24, 0.1, 0.08, 0.4, -0.35],
+    [0.15, 0.22, -0.08, 0.075, 0.36, 0.38],
+  ];
+  const crystalParts: THREE.BufferGeometry[] = [];
+  const spireGeo = new THREE.OctahedronGeometry(1, 0);
+  for (const [cx, cy, cz, r, h, tilt] of shardSpecs) {
+    crystalParts.push(
+      bakePart(spireGeo, {
+        x: cx,
+        y: cy,
+        z: cz,
+        sx: r,
+        sy: h,
+        sz: r,
+        rz: tilt,
+        rx: tilt * 0.5,
+      }),
+    );
+  }
+  spireGeo.dispose();
+  group.add(new THREE.Mesh(mergeBakedParts(crystalParts), glowMat));
+  return group;
+}
+
+/**
+ * Nearby tethered levitating rock shard with craggy keel, cushioned turf cap,
+ * underside crystal vein, optional lantern shrine, and catenary suspension cable.
+ */
+export function buildOrbitingRockShard(
+  palette: ThemePalette,
+  seed: number,
+  hasShrine: boolean,
+  tetherDelta: { x: number; y: number; z: number },
+): THREE.Group {
+  const shard = new THREE.Group();
+  const rockMat = createCelMaterial(0xffffff, { roughness: 0.86, metalness: 0.04 });
+  rockMat.vertexColors = true;
+  const turfMat = createCelMaterial(0xffffff, { roughness: 0.82, metalness: 0.02 });
+  turfMat.vertexColors = true;
+  const glowMat = createCelMaterial(palette.accentSecondary, {
+    emissive: palette.accentSecondary,
+    emissiveIntensity: 0.85,
+    roughness: 0.22,
+  });
+
+  const cragGeo = createFloatingCragKeelGeometry(
+    0.88,
+    1.55,
+    9,
+    seed + 61,
+    new THREE.Color(palette.cliffTop),
+    new THREE.Color(palette.cliffSide),
+    new THREE.Color(palette.machineBase),
+  );
+  cragGeo.translate(0, 0.06, 0);
+  shard.add(new THREE.Mesh(cragGeo, rockMat));
+
+  const turfGeo = createMesaTurfGeometry(
+    0.84,
+    0.78,
+    0.04,
+    seed * 0.9,
+    seed + 71,
+    new THREE.Color(palette.valleyGrass),
+  );
+  shard.add(new THREE.Mesh(turfGeo, turfMat));
+
+  // Underside levitation crystal tip
+  const keelGem = new THREE.Mesh(new THREE.OctahedronGeometry(0.18, 0), glowMat);
+  keelGem.position.y = -1.48;
+  keelGem.scale.set(0.75, 1.55, 0.75);
+  shard.add(keelGem);
+
+  if (hasShrine) {
+    const post = buildPlatformBeaconPost(palette);
+    post.scale.setScalar(0.72);
+    post.position.set(0.1, 0.34, 0);
+    shard.add(post);
+  } else {
+    const crystal = buildCrystalOutcropGroup(palette, seed + 13);
+    crystal.scale.setScalar(0.76);
+    crystal.position.set(-0.08, 0.32, 0.05);
+    shard.add(crystal);
+  }
+
+  // Catenary suspension cable reaching back to the main citadel rim
+  const cableCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, -0.35, 0),
+    new THREE.Vector3(
+      tetherDelta.x * 0.5,
+      tetherDelta.y * 0.5 - 0.65,
+      tetherDelta.z * 0.5,
+    ),
+    new THREE.Vector3(tetherDelta.x, tetherDelta.y, tetherDelta.z),
+  ]);
+  const cableMat = createCelMaterial(palette.ink, { roughness: 0.55, metalness: 0.35 });
+  const cableMesh = new THREE.Mesh(
+    new THREE.TubeGeometry(cableCurve, 10, 0.028, 5, false),
+    cableMat,
+  );
+  shard.add(cableMesh);
+
+  return shard;
+}
+
+/**
+ * Soft glowing firefly motes hovering around garden terraces and crystal springs.
+ */
+export function buildTerraceFireflies(
+  palette: ThemePalette,
+  outerWorldR: number,
+  centerX: number,
+  centerZ: number,
+): THREE.Group {
+  const group = new THREE.Group();
+  const gemGeo = new THREE.OctahedronGeometry(0.058, 0);
+  const cyanMat = createCelMaterial(palette.accentSecondary, {
+    emissive: palette.accentSecondary,
+    emissiveIntensity: 1.25,
+    roughness: 0.15,
+  });
+  const amberMat = createCelMaterial(palette.accent, {
+    emissive: palette.accent,
+    emissiveIntensity: 1.15,
+    roughness: 0.15,
+  });
+
+  const count = 20;
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2 + 0.2;
+    const r = outerWorldR * (0.76 + (i % 3) * 0.14);
+    const fx = centerX + Math.cos(a) * r;
+    const fz = centerZ + Math.sin(a) * r;
+    const fy = 0.45 + (i % 4) * 0.38;
+    const mote = new THREE.Mesh(gemGeo, i % 2 === 0 ? cyanMat : amberMat);
+    mote.position.set(fx, fy, fz);
+    mote.userData.sceneryAnim = 'firefly';
+    mote.userData.baseX = fx;
+    mote.userData.baseY = fy;
+    mote.userData.baseZ = fz;
+    mote.userData.phase = i * 1.17;
+    group.add(mote);
+  }
+  return group;
+}
+
+/**
+ * Mossy sculpted rock & pebble outcrop for botanical island terraces.
+ */
+export function buildTerraceBoulder(palette: ThemePalette, seed = 0): THREE.Group {
+  const group = new THREE.Group();
+  const rockMat = createCelMaterial(palette.cliffSide, { roughness: 0.88, metalness: 0.04 });
+  const mossMat = createCelMaterial(palette.valleyGrass, { roughness: 0.82, metalness: 0.02 });
+
+  const mainRock = new THREE.Mesh(createBoulderGeometry(0.28, seed + 3), rockMat);
+  mainRock.castShadow = true;
+  mainRock.receiveShadow = true;
+  const sidePebble = new THREE.Mesh(createBoulderGeometry(0.16, seed + 17), rockMat);
+  sidePebble.position.set(0.24, -0.02, 0.14);
+  const mossCap = new THREE.Mesh(createBoulderGeometry(0.18, seed + 29), mossMat);
+  mossCap.position.set(-0.08, 0.16, -0.04);
+  mossCap.scale.set(1.1, 0.45, 1.05);
+
+  group.add(mainRock, sidePebble, mossCap);
+  return group;
+}
+

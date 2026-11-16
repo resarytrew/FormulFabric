@@ -34,6 +34,7 @@ import {
   type PaletteThemeId,
 } from './celMaterials';
 import type { Vec2 } from './conveyorTopology';
+import { computeIslandTerrainLayout } from './islandLayout';
 import {
   buildBondRodMesh,
   buildBonsaiTreeGroup,
@@ -57,6 +58,21 @@ import {
   TOKEN_ARRIVAL_ALPHA,
   TOKEN_TRIGGER_ALPHA,
 } from './tokenAnimationTimeline';
+import {
+  buildBlossomBonsaiGroup,
+  buildBrassAstrolabeObservatory,
+  buildCrystalOutcropGroup,
+  buildCrystalSpringWaterfall,
+  buildLevitatingCrystalPylon,
+  buildOrbitingRockShard,
+  buildSkyWindVaneTower,
+  buildStoneArchPergola,
+  buildTerraceBoulder,
+  buildTerraceFireflies,
+  createTerraceParapetGeometry,
+  createTerraceTrimRingGeometry,
+  createTerraceTurfCapGeometry,
+} from './worldScenery';
 
 export interface HexSceneProps {
   world: SimulationWorld;
@@ -377,17 +393,23 @@ export function HexScene3D({
 
     // Camera (tilted isometric perspective for strong 3D diorama readability)
     const camera = new THREE.PerspectiveCamera(34, width / height, 0.5, 220);
-    const defaultCamPos = new THREE.Vector3(0, 14.5, 12.5);
+    const defaultCamPos = new THREE.Vector3(0, 15.5, 15.8);
     const defaultTarget = new THREE.Vector3(0, 0, 0.3);
-    camera.position.copy(defaultCamPos);
-    camera.lookAt(defaultTarget);
+    if (propsRef.current.isTitleMode) {
+      const a0 = 0.25;
+      camera.position.set(-2.3 + Math.sin(a0) * 24.5, 14.8, 0.2 + Math.cos(a0) * 24.5);
+      camera.lookAt(-2.3, -0.3, 0.2);
+    } else {
+      camera.position.copy(defaultCamPos);
+      camera.lookAt(defaultTarget);
+    }
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = !isSoftwareGl;
     controls.dampingFactor = 0.08;
     controls.target.copy(defaultTarget);
     controls.minDistance = 7;
-    controls.maxDistance = 28;
+    controls.maxDistance = 52;
     controls.minPolarAngle = 0.32;
     controls.maxPolarAngle = Math.PI / 2.25;
     controls.screenSpacePanning = true;
@@ -401,12 +423,12 @@ export function HexScene3D({
     keyLight.castShadow = !isSoftwareGl;
     keyLight.shadow.mapSize.set(2048, 2048);
     keyLight.shadow.radius = 3;
-    keyLight.shadow.camera.left = -13;
-    keyLight.shadow.camera.right = 13;
-    keyLight.shadow.camera.top = 13;
-    keyLight.shadow.camera.bottom = -13;
+    keyLight.shadow.camera.left = -16;
+    keyLight.shadow.camera.right = 16;
+    keyLight.shadow.camera.top = 16;
+    keyLight.shadow.camera.bottom = -16;
     keyLight.shadow.camera.near = 2;
-    keyLight.shadow.camera.far = 48;
+    keyLight.shadow.camera.far = 54;
     keyLight.shadow.bias = -0.0004;
     keyLight.shadow.normalBias = 0.025;
     scene.add(keyLight);
@@ -447,6 +469,7 @@ export function HexScene3D({
     );
     let activeChannelMat: THREE.ShaderMaterial | null = null;
     let activeWaterMat: THREE.ShaderMaterial | null = null;
+    let activeWaterfallMat: THREE.ShaderMaterial | null = null;
     let animatedSceneryNodes: THREE.Object3D[] = [];
     let channelActiveBlend = 0.28;
 
@@ -911,6 +934,7 @@ export function HexScene3D({
       clearGroup(gridGroup);
       clearGroup(cliffGroup);
       activeWaterMat = null;
+      activeWaterfallMat = null;
       animatedSceneryNodes = [];
       clearGroup(sceneryGroup);
       interactableHexes = [];
@@ -919,6 +943,16 @@ export function HexScene3D({
       const worldSnap = propsRef.current.world;
       const tileGeo = getSharedHexTileGeometry();
       const hitGeo = getSharedHexHitGeometry();
+      const layout = computeIslandTerrainLayout(worldSnap.platformHexes, worldSnap.narrowGapHexes);
+
+      // Expand shadow frustum dynamically to embrace enlarged playable deck + 3-ring terraces
+      const shadowSpan = Math.max(15, layout.outerWorldR * 1.38);
+      keyLight.shadow.camera.left = -shadowSpan;
+      keyLight.shadow.camera.right = shadowSpan;
+      keyLight.shadow.camera.top = shadowSpan;
+      keyLight.shadow.camera.bottom = -shadowSpan;
+      keyLight.shadow.camera.far = Math.max(54, shadowSpan * 2.8);
+      keyLight.shadow.camera.updateProjectionMatrix();
 
       // Matte tactile stone/ceramic hex deck materials; instance colors apply subtle per-tile variation
       const topMat = createCelMaterial(0xffffff, {
@@ -932,7 +966,6 @@ export function HexScene3D({
       });
       const hitMat = new THREE.MeshBasicMaterial({ visible: false });
 
-      let maxR = 2;
       const solidCoords: AxialCoord[] = [];
       const gapCoords: AxialCoord[] = [];
       for (const k of worldSnap.platformHexes) {
@@ -942,21 +975,20 @@ export function HexScene3D({
         } else {
           solidCoords.push(c);
         }
-        maxR = Math.max(maxR, hexDistance(c, { q: 0, r: 0 }));
       }
 
       // Per-hex instanced recessed dark seam sub-plinths (clean grout lines without outer plate overhang)
-      const totalCount = solidCoords.length + gapCoords.length;
       const count = solidCoords.length;
       const seamGeo = new THREE.CylinderGeometry(HEX_SIZE * 0.992, HEX_SIZE * 0.96, 0.34, 6);
       const seamMat = createCelMaterial(pal.ink, { roughness: 0.95, metalness: 0 });
       const seamInst = new THREE.InstancedMesh(seamGeo, seamMat, Math.max(1, count));
 
-      // Instanced beveled playable hex tiles with subtle per-tile tonal variation
+      // Instanced beveled playable hex tiles with subtle courtyard edge cornice & tonal variation
       const tileInst = new THREE.InstancedMesh(tileGeo, [topMat, sideMat], Math.max(1, count));
       tileInst.receiveShadow = !isSoftwareGl;
       tileInst.castShadow = !isSoftwareGl;
       const baseTopColor = new THREE.Color(pal.hexTop);
+      const edgeTintColor = new THREE.Color(pal.hexRim);
 
       // Crisp flat instanced hex outline rings flush on deck top so cells read clearly on dark slate
       const gridRingGeo = getSharedHexGridRingGeometry();
@@ -970,11 +1002,12 @@ export function HexScene3D({
       });
       const gridRingInst = new THREE.InstancedMesh(gridRingGeo, gridRingMat, Math.max(1, count));
 
-      const fullDiskCount = 1 + 3 * maxR * (maxR + 1);
-      const hasChasm = totalCount < fullDiskCount || gapCoords.length > 0;
+      const maxR = layout.maxR;
+      const hasChasm = layout.hasChasm;
 
       solidCoords.forEach((c, idx) => {
         const w = hexToWorld(c);
+        const ck = hexKey(c);
         _dummy.position.set(w.x, 0, w.z);
         _dummy.rotation.set(0, 0, 0);
         _dummy.scale.set(1, 1, 1);
@@ -994,6 +1027,9 @@ export function HexScene3D({
         const hash = Math.abs((c.q * 73856093) ^ (c.r * 19349663)) % 100;
         const shade = 0.94 + (hash / 100) * 0.085;
         _tileColor.copy(baseTopColor).multiplyScalar(shade);
+        if (layout.edgePlayableKeys.has(ck)) {
+          _tileColor.lerp(edgeTintColor, 0.16);
+        }
         tileInst.setColorAt(idx, _tileColor);
 
         // Invisible hit mesh for raycasting
@@ -1009,6 +1045,24 @@ export function HexScene3D({
         gridRingInst.computeBoundingSphere();
         seamInst.computeBoundingSphere();
         gridGroup.add(seamInst, tileInst, gridRingInst);
+      }
+
+      // Subtle architectural compass medallion ring recessed on center origin hex (0,0)
+      if (worldSnap.platformHexes.has('0,0') && !worldSnap.narrowGapHexes.has('0,0')) {
+        const originRingGeo = new THREE.RingGeometry(HEX_SIZE * 0.43, HEX_SIZE * 0.49, 6);
+        originRingGeo.rotateX(-Math.PI / 2);
+        originRingGeo.rotateY(Math.PI / 6);
+        const originRingMat = new THREE.MeshBasicMaterial({
+          color: pal.hexRim,
+          transparent: true,
+          opacity: 0.45,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -1,
+        });
+        const originRing = new THREE.Mesh(originRingGeo, originRingMat);
+        originRing.position.set(0, 0.005, 0);
+        gridGroup.add(originRing);
       }
 
       // Render narrow-gap fissure hexes: sunken abyssal pit rimmed with amber caution beacon ring
@@ -1053,79 +1107,191 @@ export function HexScene3D({
         }
       }
 
-      // Terraced outer rocky cliff hexes (clean Tunic matte stone without polka dots or wireframe lines)
-      const cliffTopMat = createCelMaterial(0xffffff, { roughness: 0.84, metalness: 0.03 });
-      const cliffSideMat = createCelMaterial(pal.cliffSide, { roughness: 0.88, metalness: 0.04 });
-      const cliffCoords: Array<{ c: AxialCoord; y: number }> = [];
-      const outerR = maxR + 1;
-      for (let q = -outerR; q <= outerR; q++) {
-        const r1 = Math.max(-outerR, -q - outerR);
-        const r2 = Math.min(outerR, -q + outerR);
-        for (let r = r1; r <= r2; r++) {
-          const c = { q, r };
-          const k = hexKey(c);
-          if (worldSnap.platformHexes.has(k)) continue;
-          const dist = hexDistance(c, { q: 0, r: 0 });
-          if (dist <= maxR || dist > outerR) continue;
-          const hash = Math.abs((q * 73856093) ^ (r * 19349663)) % 10;
-          if (hash < 2) continue;
-          const elev = hash >= 8 ? 0.3 : -0.34 - (hash % 3) * 0.14;
-          cliffCoords.push({ c, y: elev });
-        }
-      }
-
-      if (cliffCoords.length > 0) {
+      // Multi-Level Sculpted Outer Floating Citadel Terraces (Rings 1..3: masonry retaining walls,
+      // mossy meadow turf shelves, luminous step trim rails, carved stone parapets, crystal headlands)
+      const terraces = layout.terraces;
+      if (terraces.length > 0) {
+        const cliffTopMat = createCelMaterial(0xffffff, { roughness: 0.84, metalness: 0.04 });
+        const cliffSideMat = createCelMaterial(pal.cliffSide, { roughness: 0.88, metalness: 0.04 });
         const cliffInst = new THREE.InstancedMesh(
           tileGeo,
           [cliffTopMat, cliffSideMat],
-          cliffCoords.length,
+          terraces.length,
         );
         cliffInst.receiveShadow = !isSoftwareGl;
         cliffInst.castShadow = !isSoftwareGl;
-        const baseCliffTop = new THREE.Color(pal.cliffTop);
 
-        cliffCoords.forEach(({ c, y }, idx) => {
-          const w = hexToWorld(c);
-          _dummy.position.set(w.x, y, w.z);
+        const baseCliffTop = new THREE.Color(pal.cliffTop);
+        const masonryWarm = new THREE.Color(pal.machineBase).lerp(baseCliffTop, 0.68);
+        const crystalTopCol = new THREE.Color(pal.hexRim).lerp(
+          new THREE.Color(pal.accentSecondary),
+          0.22,
+        );
+
+        const turfTerraces: typeof terraces = [];
+        const trimTerraces: typeof terraces = [];
+        const parapetTerraces: typeof terraces = [];
+        const crystalTerraces: typeof terraces = [];
+
+        terraces.forEach((t, idx) => {
+          _dummy.position.set(t.x, t.y, t.z);
           _dummy.rotation.set(0, 0, 0);
-          _dummy.scale.set(1, 2.6, 1);
+          _dummy.scale.set(1, t.depthScale, 1);
           _dummy.updateMatrix();
           cliffInst.setMatrixAt(idx, _dummy.matrix);
+          _dummy.scale.set(1, 1, 1);
 
-          const hash = Math.abs((c.q * 19349663) ^ (c.r * 83492791)) % 100;
-          const shade = 0.92 + (hash / 100) * 0.12;
-          _tileColor.copy(baseCliffTop).multiplyScalar(shade);
+          const hash = Math.abs((t.coord.q * 19349663) ^ (t.coord.r * 83492791)) % 100;
+          const shade = 0.9 + (hash / 100) * 0.16;
+          if (t.kind === 'crystal') {
+            _tileColor.copy(crystalTopCol).multiplyScalar(shade);
+            crystalTerraces.push(t);
+          } else if (t.kind === 'turf') {
+            _tileColor.copy(baseCliffTop).multiplyScalar(0.92 * shade);
+            turfTerraces.push(t);
+          } else {
+            _tileColor
+              .copy(t.ring === 2 && t.y > 0.1 ? masonryWarm : baseCliffTop)
+              .multiplyScalar(shade);
+          }
           cliffInst.setColorAt(idx, _tileColor);
+
+          if (t.hasTrimRail) trimTerraces.push(t);
+          if (t.hasParapet) parapetTerraces.push(t);
         });
         if (cliffInst.instanceColor) cliffInst.instanceColor.needsUpdate = true;
         cliffInst.computeBoundingSphere();
         cliffGroup.add(cliffInst);
 
-        // Place up to 4 sculpted miniature bonsai trees + 3 architectural beacon posts on raised outer cliff hexes
-        const treeSpots = cliffCoords
-          .slice()
-          .sort((a, b) => b.y - a.y)
-          .slice(0, Math.min(10, cliffCoords.length));
-        const usedSpots = new Set<number>();
-        const step = Math.max(1, Math.floor(treeSpots.length / 4));
-        for (let t = 0; t < 4 && t * step < treeSpots.length; t++) {
-          const idxSpot = t * step;
-          usedSpots.add(idxSpot);
-          const spot = treeSpots[idxSpot];
-          const tw = hexToWorld(spot.c);
-          const bonsai = buildBonsaiTreeGroup(pal, t);
-          bonsai.position.set(tw.x, spot.y, tw.z);
-          sceneryGroup.add(bonsai);
+        // Cushioned mossy grass meadow caps atop botanical terraces
+        if (turfTerraces.length > 0) {
+          const turfGeo = createTerraceTurfCapGeometry();
+          const turfMat = createCelMaterial(0xffffff, { roughness: 0.84, metalness: 0.02 });
+          const turfInst = new THREE.InstancedMesh(turfGeo, turfMat, turfTerraces.length);
+          turfInst.receiveShadow = !isSoftwareGl;
+          turfInst.castShadow = !isSoftwareGl;
+          const baseGrass = new THREE.Color(pal.valleyGrass);
+          const sunGrass = baseGrass.clone().lerp(new THREE.Color(pal.cloudTop), 0.16);
+
+          turfTerraces.forEach((t, idx) => {
+            _dummy.position.set(t.x, t.y + 0.012, t.z);
+            _dummy.rotation.set(0, 0, 0);
+            _dummy.scale.set(1, 1, 1);
+            _dummy.updateMatrix();
+            turfInst.setMatrixAt(idx, _dummy.matrix);
+
+            const h = Math.abs((t.coord.q * 73856093) ^ (t.coord.r * 19349663)) % 100;
+            _tileColor
+              .copy(baseGrass)
+              .lerp(sunGrass, h / 100)
+              .multiplyScalar(t.y > 0.2 ? 1.08 : 0.96);
+            turfInst.setColorAt(idx, _tileColor);
+          });
+          if (turfInst.instanceColor) turfInst.instanceColor.needsUpdate = true;
+          turfInst.computeBoundingSphere();
+          cliffGroup.add(turfInst);
         }
-        let beaconsPlaced = 0;
-        for (let b = 0; b < treeSpots.length && beaconsPlaced < 3; b++) {
-          if (usedSpots.has(b)) continue;
-          const spot = treeSpots[b];
-          const bw = hexToWorld(spot.c);
-          const post = buildPlatformBeaconPost(pal);
-          post.position.set(bw.x, spot.y, bw.z);
-          sceneryGroup.add(post);
-          beaconsPlaced++;
+
+        // Luminous architectural step trim rails framing ring-1 transitions
+        if (trimTerraces.length > 0) {
+          const trimGeo = createTerraceTrimRingGeometry();
+          const trimMat = createCelMaterial(pal.accentSecondary, {
+            emissive: pal.accentSecondary,
+            emissiveIntensity: 0.42,
+            roughness: 0.28,
+            metalness: 0.2,
+          });
+          const trimInst = new THREE.InstancedMesh(trimGeo, trimMat, trimTerraces.length);
+          trimTerraces.forEach((t, idx) => {
+            _dummy.position.set(t.x, t.y - 0.015, t.z);
+            _dummy.rotation.set(0, 0, 0);
+            _dummy.scale.set(1, 1, 1);
+            _dummy.updateMatrix();
+            trimInst.setMatrixAt(idx, _dummy.matrix);
+          });
+          trimInst.computeBoundingSphere();
+          cliffGroup.add(trimInst);
+        }
+
+        // Carved stone citadel parapets & bollards oriented radially outward on upper masonry ledges
+        if (parapetTerraces.length > 0) {
+          const parapetGeo = createTerraceParapetGeometry();
+          const parapetCol = new THREE.Color(pal.cliffTop)
+            .lerp(new THREE.Color(pal.machineTop), 0.48)
+            .getHex();
+          const parapetMat = createCelMaterial(parapetCol, { roughness: 0.78, metalness: 0.08 });
+          const parapetInst = new THREE.InstancedMesh(
+            parapetGeo,
+            parapetMat,
+            parapetTerraces.length,
+          );
+          parapetInst.castShadow = !isSoftwareGl;
+          parapetInst.receiveShadow = !isSoftwareGl;
+          parapetTerraces.forEach((t, idx) => {
+            _dummy.position.set(t.x, t.y, t.z);
+            _dummy.rotation.set(0, Math.atan2(-(t.x - layout.centerX), -(t.z - layout.centerZ)), 0);
+            _dummy.scale.set(1, 1, 1);
+            _dummy.updateMatrix();
+            parapetInst.setMatrixAt(idx, _dummy.matrix);
+          });
+          parapetInst.computeBoundingSphere();
+          cliffGroup.add(parapetInst);
+        }
+
+        // Subtle inner glowing rune medallions on crystal headland terraces
+        if (crystalTerraces.length > 0) {
+          const cRingGeo = new THREE.RingGeometry(HEX_SIZE * 0.24, HEX_SIZE * 0.35, 6);
+          cRingGeo.rotateX(-Math.PI / 2);
+          cRingGeo.rotateY(Math.PI / 6);
+          const cRingMat = new THREE.MeshBasicMaterial({
+            color: pal.accentSecondary,
+            transparent: true,
+            opacity: 0.44,
+          });
+          const cRingInst = new THREE.InstancedMesh(cRingGeo, cRingMat, crystalTerraces.length);
+          crystalTerraces.forEach((t, idx) => {
+            _dummy.position.set(t.x, t.y + 0.016, t.z);
+            _dummy.rotation.set(0, 0, 0);
+            _dummy.scale.set(1, 1, 1);
+            _dummy.updateMatrix();
+            cRingInst.setMatrixAt(idx, _dummy.matrix);
+          });
+          cRingInst.computeBoundingSphere();
+          cliffGroup.add(cRingInst);
+        }
+      }
+
+      // Hero Landmarks, Waterfalls, Flora & Citadel Accents across the terraced island
+      for (const lm of layout.landmarks) {
+        let node: THREE.Group | null = null;
+        if (lm.kind === 'observatory') {
+          node = buildBrassAstrolabeObservatory(pal);
+        } else if (lm.kind === 'waterfall') {
+          const wf = buildCrystalSpringWaterfall(pal);
+          activeWaterfallMat = wf.waterfallMaterial;
+          node = wf.group;
+        } else if (lm.kind === 'windvane') {
+          node = buildSkyWindVaneTower(pal, lm.seed);
+        } else if (lm.kind === 'pergola') {
+          node = buildStoneArchPergola(pal);
+        } else if (lm.kind === 'pylon') {
+          node = buildLevitatingCrystalPylon(pal, lm.seed * 0.4);
+        } else if (lm.kind === 'bonsai') {
+          node = buildBonsaiTreeGroup(pal, lm.seed);
+        } else if (lm.kind === 'blossom') {
+          node = buildBlossomBonsaiGroup(pal, lm.seed);
+        } else if (lm.kind === 'beacon') {
+          node = buildPlatformBeaconPost(pal);
+        } else if (lm.kind === 'boulder') {
+          node = buildTerraceBoulder(pal, lm.seed);
+        } else if (lm.kind === 'crystalCluster') {
+          node = buildCrystalOutcropGroup(pal, lm.seed);
+        }
+        if (node) {
+          node.position.set(lm.x, lm.y, lm.z);
+          node.rotation.y = lm.rotY;
+          node.scale.setScalar(lm.scale);
+          sceneryGroup.add(node);
         }
       }
 
@@ -1134,21 +1300,54 @@ export function HexScene3D({
       activeWaterMat = valley.waterMaterial;
       sceneryGroup.add(valley.group);
 
-      // Multi-tiered rocky underbelly + hanging cables beneath the floating hex platform
-      const underbelly = buildIslandUnderbellyAndCables(maxR, pal, hasChasm);
+      // Multi-tiered rocky underbelly + hanging cables beneath the enlarged terraced citadel
+      const underbelly = buildIslandUnderbellyAndCables(maxR, pal, hasChasm, layout.outerWorldR);
       sceneryGroup.add(underbelly);
 
-      // Distant Monument Valley floating terrace mini-islands framed cleanly in sky
-      const safeOuterWorldR = (maxR + 1.8) * HEX_SIZE * 1.75;
-      const miniAngles = [-Math.PI * 0.78, -Math.PI * 0.21, Math.PI * 0.18];
+      // 5 Nearby Orbiting Levitating Rock Shards tethered with catenary cables to the citadel rim
+      for (let i = 0; i < layout.orbitShards.length; i++) {
+        const s = layout.orbitShards[i];
+        const wx = (s.tetherStart.x - s.x) / s.scale;
+        const wy = (s.tetherStart.y - s.y) / s.scale;
+        const wz = (s.tetherStart.z - s.z) / s.scale;
+        const cosR = Math.cos(s.rotY);
+        const sinR = Math.sin(s.rotY);
+        const tetherDelta = {
+          x: wx * cosR - wz * sinR,
+          y: wy,
+          z: wx * sinR + wz * cosR,
+        };
+        const shard = buildOrbitingRockShard(pal, i + 1, s.hasShrine, tetherDelta);
+        shard.position.set(s.x, s.y, s.z);
+        shard.rotation.y = s.rotY;
+        shard.scale.setScalar(s.scale);
+        shard.userData.sceneryAnim = 'miniIsland';
+        shard.userData.baseY = s.y;
+        shard.userData.amp = 0.12;
+        shard.userData.phase = s.phase;
+        sceneryGroup.add(shard);
+      }
+
+      // Soft glowing firefly motes hovering around garden terraces and crystal springs
+      sceneryGroup.add(
+        buildTerraceFireflies(pal, layout.outerWorldR, layout.centerX, layout.centerZ),
+      );
+
+      // Distant Monument Valley floating terrace mini-islands framed beyond tethered shards
+      const miniAngles = [-Math.PI * 0.78, -Math.PI * 0.21, Math.PI * 0.16];
       for (let m = 0; m < miniAngles.length; m++) {
         const ang = miniAngles[m];
-        const dist = safeOuterWorldR + 3.4 + (m % 2) * 1.8;
+        const dist = layout.outerWorldR + 5.6 + (m % 2) * 2.2;
         const mini = buildFloatingMiniIsland(pal, m);
-        mini.position.set(Math.cos(ang) * dist, 0.55 - m * 0.45, Math.sin(ang) * dist);
-        mini.scale.setScalar(m === 2 ? 0.78 : 0.95);
+        mini.position.set(
+          layout.centerX + Math.cos(ang) * dist,
+          0.7 - m * 0.48,
+          layout.centerZ + Math.sin(ang) * dist,
+        );
+        mini.scale.setScalar(m === 2 ? 0.8 : 0.96);
         mini.userData.sceneryAnim = 'miniIsland';
         mini.userData.baseY = mini.position.y;
+        mini.userData.amp = 0.26;
         mini.userData.phase = m * 2.1;
         sceneryGroup.add(mini);
       }
@@ -1158,12 +1357,12 @@ export function HexScene3D({
       for (let cl = 0; cl < cloudAngles.length; cl++) {
         const cloud = buildStylizedCloudGroup(pal, cl);
         const ang = cloudAngles[cl];
-        const rad = safeOuterWorldR + 6.4 + (cl % 2) * 2.2;
-        const cx = Math.cos(ang) * rad;
-        const cz = Math.sin(ang) * rad;
-        const cy = -1.6 + (cl % 2) * 1.1;
+        const rad = layout.outerWorldR + 8.5 + (cl % 2) * 2.4;
+        const cx = layout.centerX + Math.cos(ang) * rad;
+        const cz = layout.centerZ + Math.sin(ang) * rad;
+        const cy = -1.5 + (cl % 2) * 1.1;
         cloud.position.set(cx, cy, cz);
-        cloud.scale.setScalar(0.88 + (cl % 2) * 0.22);
+        cloud.scale.setScalar(0.9 + (cl % 2) * 0.22);
         cloud.userData.sceneryAnim = 'cloud';
         cloud.userData.baseX = cx;
         cloud.userData.speed = 0.14 + (cl % 2) * 0.06;
@@ -1185,6 +1384,13 @@ export function HexScene3D({
       machineMeshes.clear();
       const pal = PALETTES[propsRef.current.theme];
       const nextIds = new Map<HexKey, string>();
+
+      // Flush recessed socket collar geometry shared across spawner/sink tiles
+      const socketRingGeo = new THREE.RingGeometry(HEX_SIZE * 0.72, HEX_SIZE * 0.84, 6);
+      socketRingGeo.rotateX(-Math.PI / 2);
+      socketRingGeo.rotateY(Math.PI / 6);
+      let hasIoSocket = false;
+
       for (const [k, machine] of propsRef.current.world.machines.entries()) {
         const sig = `${machine.id}:${machine.type}`;
         nextIds.set(k, sig);
@@ -1196,7 +1402,27 @@ export function HexScene3D({
         mesh.position.set(w.x, 0, w.z);
         machineGroup.add(mesh);
         machineMeshes.set(k, mesh);
+
+        if (machine.type === 'spawner' || machine.type === 'sink') {
+          hasIoSocket = true;
+          const sockCol = machine.type === 'spawner' ? pal.accent : pal.accentSecondary;
+          const sockMat = new THREE.MeshBasicMaterial({
+            color: sockCol,
+            transparent: true,
+            opacity: 0.42,
+            polygonOffset: true,
+            polygonOffsetFactor: -1,
+            polygonOffsetUnits: -1,
+          });
+          const sock = new THREE.Mesh(socketRingGeo, sockMat);
+          sock.position.set(w.x, 0.006, w.z);
+          machineGroup.add(sock);
+        }
       }
+      if (!hasIoSocket) {
+        socketRingGeo.dispose();
+      }
+
       // Seamless conveyor track junction couplers
       const connectors = buildConveyorConnectorGroup(propsRef.current.world.machines, pal);
       machineGroup.add(connectors);
@@ -1633,6 +1859,7 @@ export function HexScene3D({
       camera.aspect = rect.width / rect.height;
       camera.updateProjectionMatrix();
       renderer.setSize(rect.width, rect.height);
+      renderer.render(scene, camera);
     });
     resizeObs.observe(container);
 
@@ -1684,21 +1911,30 @@ export function HexScene3D({
 
       const cx = (minX + maxX) * 0.5;
       const cz = (minZ + maxZ) * 0.5;
-      const halfX = (maxX - minX) * 0.5 + HEX_SIZE * 1.45;
-      const halfZ = (maxZ - minZ) * 0.5 + HEX_SIZE * 1.45;
+      const halfX = (maxX - minX) * 0.5 + HEX_SIZE * 2.95;
+      const halfZ = (maxZ - minZ) * 0.5 + HEX_SIZE * 2.95;
 
       const vFovRad = THREE.MathUtils.degToRad(camera.fov);
       const tanHalfV = Math.tan(vFovRad * 0.5);
       const aspect = Math.max(0.55, camera.aspect || 1.6);
-      const distV = (halfZ * 1.54) / tanHalfV;
-      const distH = (halfX * 1.66) / (tanHalfV * aspect);
-      const dist = THREE.MathUtils.clamp(Math.max(distV, distH, 13.8), 13.8, 30.0);
-      const hudOffsetX = halfX > 5.0 ? 1.85 : 0.75;
+      const distV = (halfZ * 1.48) / tanHalfV;
+      const distH = (halfX * 1.56) / (tanHalfV * aspect);
+      const dist = THREE.MathUtils.clamp(Math.max(distV, distH, 16.5), 16.5, 42.0);
+      const hudOffsetX = halfX > 5.8 ? 1.55 : 0.75;
 
-      autoCamTarget.set(cx + hudOffsetX, -0.05, cz + 0.35);
-      autoCamPos.set(cx + hudOffsetX, dist * 0.69, cz + 0.35 + dist * 0.75);
+      autoCamTarget.set(cx + hudOffsetX, -0.15, cz + 0.15);
+      autoCamPos.set(cx + hudOffsetX, dist * 0.65, cz + 0.15 + dist * 0.78);
       autoFrameActive = true;
     }
+
+    if (!propsRef.current.isTitleMode) {
+      resetCamera();
+      camera.position.copy(autoCamPos);
+      controls.target.copy(autoCamTarget);
+      controls.update();
+      autoFrameActive = false;
+    }
+    renderer.render(scene, camera);
 
     function emitEventFx(ev: SimEvent) {
       const w = hexToWorld(ev.coord);
@@ -2453,6 +2689,9 @@ export function HexScene3D({
       if (activeWaterMat) {
         activeWaterMat.uniforms.uTime.value = elapsed;
       }
+      if (activeWaterfallMat) {
+        activeWaterfallMat.uniforms.uTime.value = elapsed;
+      }
 
       // Animate inlaid pathway channel pulses smoothly
       const targetChannelActive = propsRef.current.isSimPlaying ? 1.0 : 0.28;
@@ -2477,12 +2716,12 @@ export function HexScene3D({
       // Continuous Camera Choreography
       if (titleMode) {
         controls.enabled = false;
-        const orbitAngle = elapsed * 0.12 + 0.35;
-        _v2.set(-2.3, 0, 0.2);
+        const orbitAngle = elapsed * 0.12 + 0.25;
+        _v2.set(-2.3, -0.3, 0.2);
         _v1.set(
-          _v2.x + Math.sin(orbitAngle) * 13.5,
-          12.0 + Math.sin(elapsed * 0.35) * 0.6,
-          _v2.z + Math.cos(orbitAngle) * 13.5,
+          _v2.x + Math.sin(orbitAngle) * 24.5,
+          14.8 + Math.sin(elapsed * 0.35) * 0.65,
+          _v2.z + Math.cos(orbitAngle) * 24.5,
         );
         camera.position.lerp(_v1, 1 - Math.exp(-3.5 * dt));
         controls.target.lerp(_v2, 1 - Math.exp(-3.5 * dt));
@@ -2529,13 +2768,14 @@ export function HexScene3D({
         controls.update();
       }
 
-      // Animate distant mini-islands, sky clouds, rooftop turbines, stabilizer core & radar dishes
+      // Animate mini-islands, tethered shards, clouds, astrolabe rings, wind-vanes, pylons, mist & fireflies
       for (const child of animatedSceneryNodes) {
         const sAnim = child.userData.sceneryAnim;
         if (sAnim === 'miniIsland') {
           const baseY = (child.userData.baseY as number) ?? 0;
+          const amp = (child.userData.amp as number) ?? 0.26;
           const ph = (child.userData.phase as number) ?? 0;
-          child.position.y = baseY + Math.sin(elapsed * 0.8 + ph) * 0.26;
+          child.position.y = baseY + Math.sin(elapsed * 0.8 + ph) * amp;
         } else if (sAnim === 'cloud') {
           const baseX = (child.userData.baseX as number) ?? 0;
           const speed = (child.userData.speed as number) ?? 0.3;
@@ -2544,6 +2784,28 @@ export function HexScene3D({
         } else if (sAnim === 'spinY') {
           const spinSpeed = (child.userData.spinSpeed as number) ?? 1.5;
           child.rotation.y += dt * spinSpeed;
+        } else if (sAnim === 'spinZ') {
+          const spinSpeed = (child.userData.spinSpeed as number) ?? 0.9;
+          child.rotation.z += dt * spinSpeed;
+        } else if (sAnim === 'bobSpin') {
+          const baseY = (child.userData.baseY as number) ?? 0.88;
+          const ph = (child.userData.phase as number) ?? 0;
+          child.position.y = baseY + Math.sin(elapsed * 1.9 + ph) * 0.08;
+          child.rotation.y += dt * 1.1;
+        } else if (sAnim === 'mistPuff') {
+          const baseY = (child.userData.baseY as number) ?? -3.9;
+          const ph = (child.userData.phase as number) ?? 0;
+          const cyc = (elapsed * 0.55 + ph * 0.25) % 1;
+          child.position.y = baseY + cyc * 0.68;
+          child.scale.setScalar(0.85 + Math.sin(cyc * Math.PI) * 0.45);
+        } else if (sAnim === 'firefly') {
+          const baseX = (child.userData.baseX as number) ?? 0;
+          const baseY = (child.userData.baseY as number) ?? 0.8;
+          const baseZ = (child.userData.baseZ as number) ?? 0;
+          const ph = (child.userData.phase as number) ?? 0;
+          child.position.x = baseX + Math.sin(elapsed * 0.9 + ph) * 0.28;
+          child.position.y = baseY + Math.sin(elapsed * 1.5 + ph * 1.3) * 0.16;
+          child.position.z = baseZ + Math.cos(elapsed * 0.8 + ph) * 0.28;
         } else if (sAnim === 'radarSweep') {
           const ph = (child.userData.phase as number) ?? 0;
           child.rotation.y = Math.sin(elapsed * 0.7 + ph) * 0.85;
