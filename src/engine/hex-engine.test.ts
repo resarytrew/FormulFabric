@@ -8,9 +8,11 @@ import {
   euclideanDivMod,
   getExactDiv2,
   getExactSqrt,
+  getRotationSweptHexes,
   matchComponentToPattern,
   runUntilComplete,
   stepSimulation,
+  validateLevelPlacement,
   verifyLevelSolution,
 } from './hex-engine';
 import {
@@ -23,6 +25,11 @@ import {
 } from './levels';
 import { hexDistance, hexKey, rotateAroundPivot, rotateAxialOffset } from './hex-math';
 import type { LevelDefinition, MachineType, TargetPattern } from './types';
+import {
+  evaluateMachineActionCurves,
+  evaluateTokenTickTimeline,
+  evaluateTransportCurve,
+} from '../render/tokenAnimationTimeline';
 
 test('signed integer arithmetic and exact div2 parity including negative numbers and zero', () => {
   for (const even of [-8, -4, -2, 0, 2, 4]) {
@@ -404,6 +411,12 @@ test('all Campaign + Eureka + Impossible + Grade5 demo solutions pass simulation
     ];
 
     for (const sol of solutionsToCheck) {
+      const placementErrors = validateLevelPlacement(level, sol.blocks);
+      assert.deepEqual(
+        placementErrors,
+        [],
+        `Level ${level.id} ${sol.name} placement invalid: ${placementErrors.join('; ')}`,
+      );
       assert.ok(sol.blocks.length > 0, `Level ${level.id} ${sol.name} must not be empty`);
       if (level.maxTotalBlocks !== undefined) {
         assert.ok(
@@ -1478,6 +1491,338 @@ test('Chapter IV Grade 5 levels expose complete 4-line briefings, 3-tier hints, 
     assert.ok(lvl.explainQuestion!.explanation.length >= 10);
   }
 });
+
+test('Actuator > Belt thrust hierarchy overrides passive belts without false conflict while enforcing same-tier conflicts', () => {
+  const overrideLevel: LevelDefinition = {
+    id: 'tier-override',
+    index: 99,
+    title: 'Tier Override',
+    subtitle: '',
+    tier: 'Средний',
+    radius: 3,
+    availableTools: ['conveyor', 'pusher', 'rotator', 'magnet'],
+    requiredDeliveries: 1,
+    presetMachines: [
+      // Token at (0,0) on conveyor facing East (dir=0), but Pusher at (0,1) dir=4 pushes North-West to (0,-1)
+      { type: 'conveyor', coord: { q: 0, r: 0 }, locked: true, config: { dir: 0 } },
+      { type: 'pusher', coord: { q: 0, r: 1 }, locked: true, config: { dir: 4 } },
+    ],
+    pedagogyNote: '',
+    bonusGoalText: '',
+  };
+  const wPusherWins = createWorldFromLevel(overrideLevel);
+  wPusherWins.tokens.set('t1', { id: 't1', value: 5, coord: { q: 0, r: 0 }, prevCoord: { q: 0, r: 0 }, spawnOrder: 1 });
+  stepSimulation(wPusherWins);
+  assert.equal(wPusherWins.status, 'running');
+  assert.deepEqual(wPusherWins.tokens.get('t1')?.coord, { q: 0, r: -1 });
+  assert.equal(wPusherWins.tokens.get('t1')?.moveSource, 'pusher');
+
+  // Rotator overriding passive conveyor on bonded polymer
+  const rotOverrideLevel: LevelDefinition = {
+    ...overrideLevel,
+    id: 'rot-override',
+    presetMachines: [
+      { type: 'conveyor', coord: { q: 1, r: 0 }, locked: true, config: { dir: 0 } },
+      { type: 'rotator', coord: { q: 0, r: 0 }, locked: true, config: { dir: 0, rotMode: 'cw' } },
+    ],
+  };
+  const wRotWins = createWorldFromLevel(rotOverrideLevel);
+  wRotWins.tokens.set('r1', { id: 'r1', value: 7, coord: { q: 1, r: 0 }, prevCoord: { q: 1, r: 0 }, spawnOrder: 1 });
+  stepSimulation(wRotWins);
+  assert.equal(wRotWins.status, 'running');
+  assert.equal(wRotWins.tokens.get('r1')?.moveSource, 'rotator');
+  assert.deepEqual(wRotWins.tokens.get('r1')?.coord, { q: 0, r: 1 });
+
+  // Same-tier Actuator vs Actuator conflict (Pusher vs Rotator) must still trigger THRUST_CONFLICT
+  const conflictLevel: LevelDefinition = {
+    ...overrideLevel,
+    id: 'tier2-conflict',
+    presetMachines: [
+      { type: 'pusher', coord: { q: -1, r: 0 }, locked: true, config: { dir: 0 } },
+      { type: 'rotator', coord: { q: 0, r: 1 }, locked: true, config: { dir: 4, rotMode: 'cw' } },
+    ],
+  };
+  const wConflict = createWorldFromLevel(conflictLevel);
+  wConflict.tokens.set('c1', { id: 'c1', value: 9, coord: { q: 0, r: 0 }, prevCoord: { q: 0, r: 0 }, spawnOrder: 1 });
+  stepSimulation(wConflict);
+  assert.equal(wConflict.status, 'error');
+  assert.ok(wConflict.errorReason?.includes('Конфликт векторов тяги'));
+});
+
+test('pusher moves aligned trains up to 3 spheres (overriding opposing conveyor) and errors on 4-sphere overload', () => {
+  const trainLevel: LevelDefinition = {
+    id: 'pusher-chain',
+    index: 99,
+    title: 'Pusher Chain',
+    subtitle: '',
+    tier: 'Средний',
+    radius: 4,
+    availableTools: ['pusher', 'conveyor'],
+    requiredDeliveries: 1,
+    presetMachines: [
+      { type: 'pusher', coord: { q: -2, r: 0 }, locked: true, config: { dir: 0 } },
+      // Middle sphere sits on an opposing West-facing conveyor (dir=3), pusher overpowers the whole train!
+      { type: 'conveyor', coord: { q: 0, r: 0 }, locked: true, config: { dir: 3 } },
+    ],
+    pedagogyNote: '',
+    bonusGoalText: '',
+  };
+
+  // 3 aligned spheres: (-1,0), (0,0), (1,0) -> all advance East with pushChainIndex 0, 1, 2
+  const w3 = createWorldFromLevel(trainLevel);
+  w3.tokens.set('a', { id: 'a', value: 1, coord: { q: -1, r: 0 }, prevCoord: { q: -1, r: 0 }, spawnOrder: 1 });
+  w3.tokens.set('b', { id: 'b', value: 2, coord: { q: 0, r: 0 }, prevCoord: { q: 0, r: 0 }, spawnOrder: 2 });
+  w3.tokens.set('c', { id: 'c', value: 3, coord: { q: 1, r: 0 }, prevCoord: { q: 1, r: 0 }, spawnOrder: 3 });
+  stepSimulation(w3);
+  assert.equal(w3.status, 'running');
+  assert.deepEqual(w3.tokens.get('a')?.coord, { q: 0, r: 0 });
+  assert.deepEqual(w3.tokens.get('b')?.coord, { q: 1, r: 0 });
+  assert.deepEqual(w3.tokens.get('c')?.coord, { q: 2, r: 0 });
+  assert.equal(w3.tokens.get('a')?.pushChainIndex, 0);
+  assert.equal(w3.tokens.get('b')?.pushChainIndex, 1);
+  assert.equal(w3.tokens.get('c')?.pushChainIndex, 2);
+
+  // 4 aligned spheres -> triggers pusher overload error
+  const w4 = createWorldFromLevel(trainLevel);
+  w4.tokens.set('a', { id: 'a', value: 1, coord: { q: -1, r: 0 }, prevCoord: { q: -1, r: 0 }, spawnOrder: 1 });
+  w4.tokens.set('b', { id: 'b', value: 2, coord: { q: 0, r: 0 }, prevCoord: { q: 0, r: 0 }, spawnOrder: 2 });
+  w4.tokens.set('c', { id: 'c', value: 3, coord: { q: 1, r: 0 }, prevCoord: { q: 1, r: 0 }, spawnOrder: 3 });
+  w4.tokens.set('d', { id: 'd', value: 4, coord: { q: 2, r: 0 }, prevCoord: { q: 2, r: 0 }, spawnOrder: 4 });
+  stepSimulation(w4);
+  assert.equal(w4.status, 'error');
+  assert.ok(w4.errorReason?.includes('Перегрузка толкателя'));
+});
+
+test('rotator swept-arc geometry detects solid housings & external spheres on radius-2 arcs while distance-1 orbits cleanly', () => {
+  // Distance 1 around (0,0) has empty swept intermediate hexes
+  assert.deepEqual(getRotationSweptHexes({ q: 1, r: 0 }, { q: 0, r: 0 }, 1), []);
+  // Distance 2 around (0,0) from (2,0) CW to (0,2) sweeps through (1,1)
+  const swept2 = getRotationSweptHexes({ q: 2, r: 0 }, { q: 0, r: 0 }, 1);
+  assert.ok(
+    swept2.some((h) => h.q === 1 && h.r === 1),
+    `Expected swept sector through (1,1), got ${JSON.stringify(swept2)}`,
+  );
+
+  // Solid machine at (1,1) blocks CW sweep of bonded polymer (1,0)--(2,0) rotated around (0,0)
+  const blockedArcLevel: LevelDefinition = {
+    id: 'rot-arc-solid',
+    index: 99,
+    title: 'Rotator Arc Solid',
+    subtitle: '',
+    tier: 'Средний',
+    radius: 3,
+    availableTools: ['rotator', 'pusher'],
+    requiredDeliveries: 1,
+    presetMachines: [
+      { type: 'rotator', coord: { q: 0, r: 0 }, locked: true, config: { dir: 0, rotMode: 'cw' } },
+      { type: 'pusher', coord: { q: 1, r: 1 }, locked: true, config: { dir: 0 } },
+    ],
+    pedagogyNote: '',
+    bonusGoalText: '',
+  };
+  const wSolidArc = createWorldFromLevel(blockedArcLevel);
+  wSolidArc.tokens.set('t1', { id: 't1', value: 2, coord: { q: 1, r: 0 }, prevCoord: { q: 1, r: 0 }, spawnOrder: 1 });
+  wSolidArc.tokens.set('t2', { id: 't2', value: 4, coord: { q: 2, r: 0 }, prevCoord: { q: 2, r: 0 }, spawnOrder: 2 });
+  wSolidArc.bonds.push({ a: 't1', b: 't2' });
+  stepSimulation(wSolidArc);
+  assert.equal(wSolidArc.status, 'error');
+  assert.ok(wSolidArc.errorReason?.includes('дуге поворота'));
+
+  // External sphere parked inside (1,1) also collides on the swept arc even though final dest is (0,2)
+  const extArcLevel: LevelDefinition = {
+    ...blockedArcLevel,
+    presetMachines: [
+      { type: 'rotator', coord: { q: 0, r: 0 }, locked: true, config: { dir: 0, rotMode: 'cw' } },
+    ],
+  };
+  const wExtArc = createWorldFromLevel(extArcLevel);
+  wExtArc.tokens.set('t1', { id: 't1', value: 2, coord: { q: 1, r: 0 }, prevCoord: { q: 1, r: 0 }, spawnOrder: 1 });
+  wExtArc.tokens.set('t2', { id: 't2', value: 4, coord: { q: 2, r: 0 }, prevCoord: { q: 2, r: 0 }, spawnOrder: 2 });
+  wExtArc.bonds.push({ a: 't1', b: 't2' });
+  wExtArc.tokens.set('blocker', { id: 'blocker', value: 9, coord: { q: 1, r: 1 }, prevCoord: { q: 1, r: 1 }, spawnOrder: 3 });
+  stepSimulation(wExtArc);
+  assert.equal(wExtArc.status, 'error');
+  assert.ok(wExtArc.errorReason?.includes('дуге поворота'));
+});
+
+test('side-port machines (dup, divmod, halver, scales) pause cleanly while altDir is occupied by another sphere, then auto-resume and detect permanent deadlocks', () => {
+  // 1) Duplicator pauses when altDir=(0,1) holds a moving sphere on conveyor, then completes on next tick
+  const dupQueueLevel: LevelDefinition = {
+    id: 'dup-queue',
+    index: 99,
+    title: 'Dup Queue',
+    subtitle: '',
+    tier: 'Средний',
+    radius: 3,
+    availableTools: ['dup', 'conveyor'],
+    requiredDeliveries: 1,
+    presetMachines: [
+      { type: 'spawner', coord: { q: -1, r: 0 }, locked: true, config: { dir: 0, sequence: [6], loopSequence: false, spawnInterval: 5 } },
+      { type: 'dup', coord: { q: 0, r: 0 }, locked: true, config: { dir: 0, altDir: 1 } },
+      // Sphere at (1,0) moves West? No, hold blocker at (0,1) via a 1-tick conveyor delay:
+      // Put conveyor at (0,1) -> East (1,1), but spawn blocker at (-1,1) moving East onto (0,1) on tick 1!
+      { type: 'spawner', coord: { q: -1, r: 1 }, locked: true, config: { dir: 0, sequence: [9], loopSequence: false, spawnInterval: 5 } },
+      { type: 'conveyor', coord: { q: 0, r: 1 }, locked: true, config: { dir: 1 } },
+    ],
+    pedagogyNote: '',
+    bonusGoalText: '',
+  };
+  const wDup = createWorldFromLevel(dupQueueLevel);
+  // Tick 1: both 6 at (0,0) and 9 at (0,1) spawn! So (0,1) is occupied -> dup pauses 6 in place!
+  stepSimulation(wDup);
+  assert.equal(wDup.status, 'running');
+  assert.equal(wDup.tokens.size, 2);
+  const held6 = Array.from(wDup.tokens.values()).find((t) => t.value === 6)!;
+  assert.deepEqual(held6.coord, { q: 0, r: 0 });
+  assert.ok(held6.waitingSidePort);
+  assert.equal(wDup.machines.get(hexKey({ q: 0, r: 0 }))?.state.isWaitingSideExit, true);
+  assert.ok(wDup.events.some((e) => e.badge === '⏳'));
+
+  // Tick 2: 9 moves from (0,1) -> (0,2), freeing (0,1) -> dup holds 6 on (0,0) while emitting copy 6 onto (0,1)!
+  stepSimulation(wDup);
+  assert.equal(wDup.status, 'running');
+  assert.equal(held6.waitingSidePort, undefined);
+  assert.equal(wDup.machines.get(hexKey({ q: 0, r: 0 }))?.state.isWaitingSideExit, false);
+  const copy6 = Array.from(wDup.tokens.values()).find((t) => t.id !== held6.id && t.value === 6);
+  assert.ok(copy6);
+  assert.deepEqual(copy6!.coord, { q: 0, r: 1 });
+
+  // 2) Divmod preserves original value (does not double-divide!) while waiting for altDir to clear
+  const divQueueLevel: LevelDefinition = {
+    id: 'divmod-queue',
+    index: 99,
+    title: 'Divmod Queue',
+    subtitle: '',
+    tier: 'Средний',
+    radius: 3,
+    availableTools: ['divmod', 'conveyor'],
+    requiredDeliveries: 1,
+    presetMachines: [
+      { type: 'spawner', coord: { q: -1, r: 0 }, locked: true, config: { dir: 0, sequence: [7], loopSequence: false, spawnInterval: 5 } },
+      { type: 'divmod', coord: { q: 0, r: 0 }, locked: true, config: { dir: 0, altDir: 1, divisor: 3 } },
+      { type: 'spawner', coord: { q: -1, r: 1 }, locked: true, config: { dir: 0, sequence: [99], loopSequence: false, spawnInterval: 5 } },
+      { type: 'conveyor', coord: { q: 0, r: 1 }, locked: true, config: { dir: 1 } },
+    ],
+    pedagogyNote: '',
+    bonusGoalText: '',
+  };
+  const wDiv = createWorldFromLevel(divQueueLevel);
+  stepSimulation(wDiv); // Tick 1: 7 waits unmutated on divmod
+  assert.equal(wDiv.status, 'running');
+  const held7 = Array.from(wDiv.tokens.values()).find((t) => t.coord.q === 0 && t.coord.r === 0)!;
+  assert.equal(held7.value, 7, 'Token must remain unmutated while paused in side-port queue');
+  stepSimulation(wDiv); // Tick 2: blocker moves -> 7 = 3*2 + 1 executes cleanly!
+  assert.equal(wDiv.status, 'running');
+  assert.equal(held7.value, 2);
+  const rem1 = Array.from(wDiv.tokens.values()).find((t) => t.coord.q === 0 && t.coord.r === 1);
+  assert.equal(rem1?.value, 1);
+
+  // 3) Halver & Scales queue + deadlock detection when blocker never moves
+  const deadlockLevel: LevelDefinition = {
+    id: 'halver-deadlock',
+    index: 99,
+    title: 'Halver Deadlock',
+    subtitle: '',
+    tier: 'Средний',
+    radius: 2,
+    availableTools: ['halver'],
+    requiredDeliveries: 1,
+    presetMachines: [
+      { type: 'spawner', coord: { q: -1, r: 0 }, locked: true, config: { dir: 0, sequence: [8], loopSequence: false, spawnInterval: 5 } },
+      { type: 'halver', coord: { q: 0, r: 0 }, locked: true, config: { dir: 0, altDir: 1 } },
+    ],
+    pedagogyNote: '',
+    bonusGoalText: '',
+  };
+  const wDead = createWorldFromLevel(deadlockLevel);
+  // Static un-driven sphere sitting permanently at (0,1)
+  wDead.tokens.set('parked', { id: 'parked', value: 42, coord: { q: 0, r: 1 }, prevCoord: { q: 0, r: 1 }, spawnOrder: 0 });
+  stepSimulation(wDead); // Tick 1: 8 spawns onto (0,0) and enters waitingSidePort (⏳)
+  assert.equal(wDead.status, 'running');
+  stepSimulation(wDead); // Tick 2: zero movement/drive -> detects permanent deadlock!
+  assert.equal(wDead.status, 'error');
+  assert.ok(wDead.errorReason?.includes('Затор на боковом выходе'));
+
+  // Scales waiting on occupied altDir then resolving cleanly
+  const scalesQueueLevel: LevelDefinition = {
+    id: 'scales-queue',
+    index: 99,
+    title: 'Scales Queue',
+    subtitle: '',
+    tier: 'Средний',
+    radius: 3,
+    availableTools: ['scales', 'conveyor'],
+    requiredDeliveries: 1,
+    presetMachines: [
+      { type: 'scales', coord: { q: 0, r: 0 }, locked: true, config: { dir: 0, altDir: 1 } },
+      { type: 'conveyor', coord: { q: -1, r: 0 }, locked: true, config: { dir: 0 } },
+      { type: 'conveyor', coord: { q: 0, r: 1 }, locked: true, config: { dir: 1 } },
+    ],
+    pedagogyNote: '',
+    bonusGoalText: '',
+  };
+  const wScales = createWorldFromLevel(scalesQueueLevel);
+  wScales.machines.get(hexKey({ q: 0, r: 0 }))!.state.memory = 4;
+  wScales.tokens.set('s2', { id: 's2', value: 9, coord: { q: -1, r: 0 }, prevCoord: { q: -1, r: 0 }, spawnOrder: 1 });
+  wScales.tokens.set('blocker', { id: 'blocker', value: 1, coord: { q: -1, r: 1 }, prevCoord: { q: -1, r: 1 }, spawnOrder: 2 });
+  // Move blocker onto (0,1) via an extra conveyor at (-1,1)->East
+  wScales.machines.set(hexKey({ q: -1, r: 1 }), {
+    id: 'm_blk',
+    type: 'conveyor',
+    coord: { q: -1, r: 1 },
+    locked: true,
+    config: { dir: 0 },
+    state: { spawnIndex: 0, cooldown: 0, memory: null, activeFlashTicks: 0, lastActionTick: -1 },
+  });
+  stepSimulation(wScales); // Tick 1: s2=9 arrives at scales while blocker arrives at (0,1) -> scales waits!
+  assert.equal(wScales.status, 'running');
+  assert.equal(wScales.machines.get(hexKey({ q: 0, r: 0 }))?.state.isWaitingSideExit, true);
+  stepSimulation(wScales); // Tick 2: blocker clears to (0,2) -> scales emits 9 on (0,0) and 4 on (0,1)!
+  assert.equal(wScales.status, 'running');
+  assert.equal(wScales.tokens.get('s2')?.value, 9);
+  const smallOut = Array.from(wScales.tokens.values()).find((t) => t.coord.q === 0 && t.coord.r === 1);
+  assert.equal(smallOut?.value, 4);
+});
+
+test('3D timeline & transport curves preserve domino cascading, jumper arc squash/stretch, and damped machine settling', () => {
+  const tl0 = evaluateTokenTickTimeline({
+    alpha: 0.18,
+    isMoving: true,
+    moveSource: 'pusher',
+    pushChainIndex: 0,
+    hasAccent: false,
+  });
+  const tl2 = evaluateTokenTickTimeline({
+    alpha: 0.18,
+    isMoving: true,
+    moveSource: 'pusher',
+    pushChainIndex: 2,
+    hasAccent: false,
+  });
+  assert.ok(tl0.moveT > tl2.moveT, 'Leading pushed sphere moves slightly ahead of 3rd sphere in domino wave');
+
+  const tlSettled = evaluateTokenTickTimeline({
+    alpha: 0.43,
+    isMoving: true,
+    moveSource: 'pusher',
+    pushChainIndex: 2,
+    hasAccent: false,
+  });
+  assert.equal(tlSettled.moveT, 1);
+
+  const jumpAscent = evaluateTransportCurve(0.14, 'jump');
+  const jumpApex = evaluateTransportCurve(0.5, 'jump');
+  const jumpLand = evaluateTransportCurve(0.9, 'jump');
+  assert.ok(jumpApex.hop > 0.75, 'Jumper reaches high parabolic apex');
+  assert.ok(jumpAscent.stretchY > 1, 'Jumper stretches vertically on launch');
+  assert.ok(jumpLand.stretchY < 1 && jumpLand.stretchXZ > 1, 'Jumper squashes smoothly on touchdown');
+
+  const actImpact = evaluateMachineActionCurves(0.56, true);
+  const actReturn = evaluateMachineActionCurves(0.99, true);
+  assert.ok(actImpact.stroke > 0.95);
+  assert.ok(Math.abs(actReturn.stroke) < 0.08);
+});
+
 
 
 

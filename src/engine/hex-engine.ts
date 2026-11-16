@@ -3,10 +3,12 @@ import {
   hexEqual,
   hexKey,
   hexNeighbor,
+  hexToWorld,
   oppositeDir,
   rotateAroundPivot,
   rotateDir,
   generateHexDisk,
+  worldToHex,
 } from './hex-math';
 import type {
   AxialCoord,
@@ -436,17 +438,22 @@ export function getConnectedComponents(world: SimulationWorld): ConnectedCompone
   return components;
 }
 
+type ThrustTier = 1 | 2;
+
 type ComponentIntent =
   | {
       kind: 'move';
       dir: HexDir;
+      tier: ThrustTier;
       signature: string;
       sourceCoord: AxialCoord;
       sourceMachineType: MachineType;
+      pushChainIndex?: number;
     }
   | {
       kind: 'jump';
       dir: HexDir;
+      tier: ThrustTier;
       signature: string;
       sourceCoord: AxialCoord;
       sourceMachineType: MachineType;
@@ -455,6 +462,7 @@ type ComponentIntent =
       kind: 'rotate';
       pivot: AxialCoord;
       cwSteps: 1 | -1;
+      tier: ThrustTier;
       signature: string;
       sourceCoord: AxialCoord;
       sourceMachineType: MachineType;
@@ -462,10 +470,50 @@ type ComponentIntent =
   | {
       kind: 'swap';
       pivot: AxialCoord;
+      tier: ThrustTier;
       signature: string;
       sourceCoord: AxialCoord;
       sourceMachineType: MachineType;
     };
+
+/**
+ * Computes intermediate hex coordinates swept by a token rotating 60° around pivot.
+ * Distance-1 orbits sweep cleanly across the shared hex edge; radius >= 2 arms sweep through
+ * intermediate sector hexes whose clearance must be verified against solid housings & other spheres.
+ */
+export function getRotationSweptHexes(
+  coord: AxialCoord,
+  pivot: AxialCoord,
+  cwSteps: 1 | -1,
+): AxialCoord[] {
+  if (hexDistance(coord, pivot) <= 1) {
+    return [];
+  }
+  const dest = rotateAroundPivot(coord, pivot, cwSteps);
+  const pW = hexToWorld(pivot);
+  const sW = hexToWorld(coord);
+  const dx = sW.x - pW.x;
+  const dz = sW.z - pW.z;
+  const totalAngle = cwSteps === 1 ? Math.PI / 3 : -Math.PI / 3;
+  const seen = new Set<HexKey>([hexKey(coord), hexKey(dest), hexKey(pivot)]);
+  const swept: AxialCoord[] = [];
+  const SAMPLES = 10;
+  for (let i = 1; i < SAMPLES; i++) {
+    const u = i / SAMPLES;
+    const ang = totalAngle * u;
+    const cos = Math.cos(ang);
+    const sin = Math.sin(ang);
+    const wx = pW.x + (dx * cos - dz * sin);
+    const wz = pW.z + (dx * sin + dz * cos);
+    const midHex = worldToHex(wx, wz);
+    const mk = hexKey(midHex);
+    if (!seen.has(mk)) {
+      seen.add(mk);
+      swept.push(midHex);
+    }
+  }
+  return swept;
+}
 
 function pushEvent(world: SimulationWorld, ev: Omit<SimEvent, 'tick' | 'id'>) {
   world.events.push({ id: world.nextEventId++, tick: world.tick, ...ev });
@@ -742,12 +790,14 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
     if (m.state.activeFlashTicks > 0) {
       m.state.activeFlashTicks -= 1;
     }
+    m.state.isWaitingSideExit = false;
   }
   for (const t of world.tokens.values()) {
     t.prevCoord = { ...t.coord };
     t.prevValue = t.value;
     t.rotatedFrom = undefined;
     t.moveSource = undefined;
+    t.pushChainIndex = undefined;
   }
 
   const components = getConnectedComponents(world);
@@ -763,7 +813,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
     tokenAtHex.set(hexKey(t.coord), t);
   }
 
-  // Phase 2: Compute Intents symmetrically (order-independent)
+  // Phase 2: Compute Intents symmetrically with Tier hierarchy (Actuator Tier 2 > Belt Tier 1)
   const intentsByComp = new Map<string, ComponentIntent[]>();
   for (const c of components) {
     intentsByComp.set(c.id, []);
@@ -772,6 +822,8 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
   const addIntent = (compId: string, intent: ComponentIntent) => {
     intentsByComp.get(compId)!.push(intent);
   };
+
+  const activePushers: Array<{ machine: MachineInstance; rootComp: ConnectedComponent }> = [];
 
   for (const machine of world.machines.values()) {
     const mKey = hexKey(machine.coord);
@@ -788,10 +840,15 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
     ) {
       const tok = tokenAtHex.get(mKey);
       if (tok) {
+        if (tok.waitingSidePort === machine.id) {
+          machine.state.isWaitingSideExit = true;
+          continue;
+        }
         const comp = tokenToComponent.get(tok.id)!;
         addIntent(comp.id, {
           kind: 'move',
           dir: machine.config.dir,
+          tier: 1,
           signature: `move:${machine.config.dir}`,
           sourceCoord: machine.coord,
           sourceMachineType: machine.type,
@@ -804,6 +861,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         addIntent(comp.id, {
           kind: 'move',
           dir: machine.config.dir,
+          tier: 1,
           signature: `move:${machine.config.dir}`,
           sourceCoord: machine.coord,
           sourceMachineType: machine.type,
@@ -820,6 +878,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         addIntent(comp.id, {
           kind: 'move',
           dir: outDir,
+          tier: 1,
           signature: `move:${outDir}`,
           sourceCoord: machine.coord,
           sourceMachineType: machine.type,
@@ -836,6 +895,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         addIntent(comp.id, {
           kind: 'move',
           dir: outDir,
+          tier: 1,
           signature: `move:${outDir}`,
           sourceCoord: machine.coord,
           sourceMachineType: machine.type,
@@ -848,10 +908,15 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
     ) {
       const tok = tokenAtHex.get(mKey);
       if (tok) {
+        if (tok.waitingSidePort === machine.id) {
+          machine.state.isWaitingSideExit = true;
+          continue;
+        }
         const comp = tokenToComponent.get(tok.id)!;
         addIntent(comp.id, {
           kind: 'move',
           dir: machine.config.dir,
+          tier: 1,
           signature: `move:${machine.config.dir}`,
           sourceCoord: machine.coord,
           sourceMachineType: machine.type,
@@ -873,6 +938,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         addIntent(comp.id, {
           kind: 'jump',
           dir: machine.config.dir,
+          tier: 2,
           signature: `jump:${machine.config.dir}`,
           sourceCoord: machine.coord,
           sourceMachineType: machine.type,
@@ -886,10 +952,13 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         addIntent(comp.id, {
           kind: 'move',
           dir: machine.config.dir,
+          tier: 2,
           signature: `move:${machine.config.dir}`,
           sourceCoord: machine.coord,
           sourceMachineType: machine.type,
+          pushChainIndex: 0,
         });
+        activePushers.push({ machine, rootComp: comp });
       }
     } else if (machine.type === 'magnet') {
       const d1 = hexNeighbor(machine.coord, machine.config.dir);
@@ -902,6 +971,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         addIntent(comp.id, {
           kind: 'move',
           dir: pullDir,
+          tier: 2,
           signature: `move:${pullDir}`,
           sourceCoord: machine.coord,
           sourceMachineType: machine.type,
@@ -917,6 +987,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
           kind: 'rotate',
           pivot: { ...machine.coord },
           cwSteps,
+          tier: 2,
           signature: `rot:${machine.coord.q},${machine.coord.r}:${cwSteps}`,
           sourceCoord: machine.coord,
           sourceMachineType: machine.type,
@@ -936,6 +1007,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         addIntent(comp.id, {
           kind: 'swap',
           pivot: { ...machine.coord },
+          tier: 2,
           signature: `swap:${machine.coord.q},${machine.coord.r}`,
           sourceCoord: machine.coord,
           sourceMachineType: machine.type,
@@ -944,7 +1016,67 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
     }
   }
 
-  // Phase 3: Conflict Checks (Thrust Conflicts, Bounds, Solid Housing, Swaps, Overlaps)
+  // Phase 2B: Propagate Pusher chain impulses along push axis (up to 3 spheres / depth 3)
+  const MAX_PUSHER_CHAIN_SPHERES = 3;
+  for (const { machine, rootComp } of activePushers) {
+    const pushDir = machine.config.dir;
+    const visitedComps = new Set<string>([rootComp.id]);
+    let totalPushedSpheres = rootComp.tokenIds.length;
+    const queue: Array<{ comp: ConnectedComponent; chainIdx: number }> = [
+      { comp: rootComp, chainIdx: 0 },
+    ];
+
+    while (queue.length > 0) {
+      const { comp, chainIdx } = queue.shift()!;
+      for (const id of comp.tokenIds) {
+        const tok = world.tokens.get(id)!;
+        const aheadCoord = hexNeighbor(tok.coord, pushDir);
+        const aheadTok = tokenAtHex.get(hexKey(aheadCoord));
+        if (!aheadTok) continue;
+        const aheadComp = tokenToComponent.get(aheadTok.id)!;
+        if (visitedComps.has(aheadComp.id)) continue;
+
+        const existingIntents = intentsByComp.get(aheadComp.id)!;
+        const hasTier2 = existingIntents.some((i) => i.tier === 2);
+        const tier1OpposesOrStalls =
+          existingIntents.length === 0 ||
+          existingIntents.some(
+            (i) => i.tier === 1 && i.kind === 'move' && i.dir === oppositeDir(pushDir),
+          );
+
+        if (!hasTier2 && !tier1OpposesOrStalls) {
+          // aheadComp moves away cleanly on its own belt this tick without blocking the pushed line
+          continue;
+        }
+
+        const nextChainIdx = chainIdx + 1;
+        totalPushedSpheres += aheadComp.tokenIds.length;
+        if (nextChainIdx >= MAX_PUSHER_CHAIN_SPHERES || totalPushedSpheres > MAX_PUSHER_CHAIN_SPHERES) {
+          triggerError(
+            world,
+            `Перегрузка толкателя: невозможно сдвинуть цепочку тяжелее ${MAX_PUSHER_CHAIN_SPHERES} сфер`,
+            [machine.coord, tok.coord, aheadCoord],
+            'collision',
+          );
+          return world;
+        }
+
+        visitedComps.add(aheadComp.id);
+        addIntent(aheadComp.id, {
+          kind: 'move',
+          dir: pushDir,
+          tier: 2,
+          signature: `move:${pushDir}`,
+          sourceCoord: machine.coord,
+          sourceMachineType: 'pusher',
+          pushChainIndex: nextChainIdx,
+        });
+        queue.push({ comp: aheadComp, chainIdx: nextChainIdx });
+      }
+    }
+  }
+
+  // Phase 3: Conflict Checks (Tiered Thrust Conflicts, Bounds, Solid Housing, Swept-Arcs, Swaps, Overlaps)
   const resolvedIntentByComp = new Map<string, ComponentIntent | null>();
 
   for (const comp of components) {
@@ -953,9 +1085,15 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       resolvedIntentByComp.set(comp.id, null);
       continue;
     }
-    const uniqueSigs = new Set(intents.map((i) => i.signature));
+    // High-tier actuators (pusher, magnet, rotator, swapper, jumper) override passive belts (tier 1)
+    let maxTier: ThrustTier = 1;
+    for (const intent of intents) {
+      if (intent.tier > maxTier) maxTier = intent.tier;
+    }
+    const topIntents = intents.filter((i) => i.tier === maxTier);
+    const uniqueSigs = new Set(topIntents.map((i) => i.signature));
     if (uniqueSigs.size > 1) {
-      const conflictCoords = intents.map((i) => i.sourceCoord);
+      const conflictCoords = topIntents.map((i) => i.sourceCoord);
       triggerError(
         world,
         'Конфликт векторов тяги: разные приводы тянут полимер в противоположных направлениях',
@@ -964,7 +1102,15 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       );
       return world;
     }
-    resolvedIntentByComp.set(comp.id, intents[0]);
+    let chosen = topIntents[0];
+    for (const cand of topIntents) {
+      const candIdx = cand.kind === 'move' ? (cand.pushChainIndex ?? 0) : 0;
+      const chosenIdx = chosen.kind === 'move' ? (chosen.pushChainIndex ?? 0) : 0;
+      if (candIdx < chosenIdx) {
+        chosen = cand;
+      }
+    }
+    resolvedIntentByComp.set(comp.id, chosen);
   }
 
   // Compute proposed coordinates for every token
@@ -1000,6 +1146,42 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
           pivot: { ...intent.pivot },
           angleDelta: intent.cwSteps === 1 ? -Math.PI / 3 : Math.PI / 3,
         });
+      }
+    }
+  }
+
+  // Check Rotator Swept-Arc Obstacles (solid machine housings & non-component spheres on swept sector)
+  for (const comp of components) {
+    const intent = resolvedIntentByComp.get(comp.id);
+    if (!intent || intent.kind !== 'rotate') continue;
+    const compSet = new Set(comp.tokenIds);
+    for (const id of comp.tokenIds) {
+      const tok = world.tokens.get(id)!;
+      const sweptHexes = getRotationSweptHexes(tok.coord, intent.pivot, intent.cwSteps);
+      for (const sweptHex of sweptHexes) {
+        const sKey = hexKey(sweptHex);
+        const sweptMachine = world.machines.get(sKey);
+        if (sweptMachine && SOLID_MACHINE_TYPES.has(sweptMachine.type)) {
+          triggerError(
+            world,
+            `Столкновение на дуге поворота ротатора: корпус механизма (${sweptMachine.type}) перекрывает сектор`,
+            [intent.pivot, tok.coord, sweptHex],
+            'collision',
+          );
+          return world;
+        }
+        for (const [otherId, otherProposed] of proposedCoordByToken.entries()) {
+          if (compSet.has(otherId)) continue;
+          if (hexEqual(otherProposed, sweptHex)) {
+            triggerError(
+              world,
+              'Столкновение на дуге поворота ротатора: сектор поворота занят другой сферой',
+              [intent.pivot, sweptHex],
+              'collision',
+            );
+            return world;
+          }
+        }
       }
     }
   }
@@ -1153,6 +1335,14 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
     const tok = world.tokens.get(id)!;
     if (!hexEqual(tok.coord, coord)) {
       movedTokenIds.add(id);
+      if (tok.waitingSidePort) {
+        const prevMach = world.machines.get(hexKey(tok.coord));
+        if (prevMach && prevMach.id === tok.waitingSidePort) {
+          prevMach.state.waitTicks = 0;
+          prevMach.state.isWaitingSideExit = false;
+        }
+        tok.waitingSidePort = undefined;
+      }
       tok.coord = { ...coord };
       tok.rotatedFrom = rotationInfoByToken.get(id);
       const comp = tokenToComponent.get(id);
@@ -1166,6 +1356,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         moveSource = 'swap';
       } else if (intent?.sourceMachineType === 'pusher') {
         moveSource = 'pusher';
+        tok.pushChainIndex = intent.pushChainIndex;
       } else if (intent?.sourceMachineType === 'magnet') {
         moveSource = 'magnet';
       }
@@ -1321,11 +1512,28 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
     world.visitedHexes.add(hexKey(t.coord));
   }
 
-  // Process Duplicators (dup: keeps original to exit along dir, spawns copy onto altDir)
+  // Helper to classify side-port availability: free vs temporary token occupation vs permanent obstacle
+  const getSidePortAvailability = (
+    altCoord: AxialCoord,
+  ): 'free' | 'occupied_token' | 'blocked_static' => {
+    const aKey = hexKey(altCoord);
+    if (!world.platformHexes.has(aKey)) return 'blocked_static';
+    if (SOLID_MACHINE_TYPES.has(world.machines.get(aKey)?.type ?? 'conveyor')) {
+      return 'blocked_static';
+    }
+    if (Array.from(world.tokens.values()).some((t) => hexEqual(t.coord, altCoord))) {
+      return 'occupied_token';
+    }
+    return 'free';
+  };
+
+  let machineActionOccurredThisTick = movedTokenIds.size > 0;
+
+  // Process Duplicators (dup: keeps original to exit along dir, spawns copy onto altDir or pauses if altDir busy)
   for (const tok of Array.from(world.tokens.values())) {
-    if (!movedTokenIds.has(tok.id)) continue;
     const machine = world.machines.get(hexKey(tok.coord));
     if (!machine || machine.type !== 'dup') continue;
+    if (!movedTokenIds.has(tok.id) && tok.waitingSidePort !== machine.id) continue;
     const isBonded = world.bonds.some((b) => b.a === tok.id || b.b === tok.id);
     if (isBonded) {
       triggerError(
@@ -1340,11 +1548,8 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       machine.coord,
       machine.config.altDir ?? rotateDir(machine.config.dir, 1),
     );
-    const copyFree =
-      world.platformHexes.has(hexKey(copyCoord)) &&
-      !Array.from(world.tokens.values()).some((t) => hexEqual(t.coord, copyCoord)) &&
-      !SOLID_MACHINE_TYPES.has(world.machines.get(hexKey(copyCoord))?.type ?? 'conveyor');
-    if (!copyFree) {
+    const portState = getSidePortAvailability(copyCoord);
+    if (portState === 'blocked_static') {
       triggerError(
         world,
         'Нет свободного гекса для вывода копии дубликатора',
@@ -1353,6 +1558,25 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       );
       return world;
     }
+    if (portState === 'occupied_token') {
+      tok.waitingSidePort = machine.id;
+      machine.state.isWaitingSideExit = true;
+      machine.state.waitTicks = (machine.state.waitTicks ?? 0) + 1;
+      if (machine.state.waitTicks === 1) {
+        pushEvent(world, {
+          type: 'blocked',
+          coord: machine.coord,
+          relatedCoords: [copyCoord],
+          message: 'Боковой выход дубликатора = занят — ожидание очереди',
+          severity: 'warning',
+          badge: '⏳',
+        });
+      }
+      continue;
+    }
+    tok.waitingSidePort = undefined;
+    machine.state.isWaitingSideExit = false;
+    machine.state.waitTicks = 0;
     const copyTok: Token = {
       id: `t_${world.nextTokenId++}`,
       value: tok.value,
@@ -1364,6 +1588,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
     };
     world.tokens.set(copyTok.id, copyTok);
     movedTokenIds.add(copyTok.id);
+    machineActionOccurredThisTick = true;
     world.visitedHexes.add(hexKey(copyCoord));
     machine.state.activeFlashTicks = 1;
     machine.state.lastActionTick = world.tick;
@@ -1413,6 +1638,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         t1.value = sum;
         t1.producedByAdderAtTick = world.tick;
         machine.state.memory = null;
+        machineActionOccurredThisTick = true;
         machine.state.activeFlashTicks = 1;
         machine.state.lastActionTick = world.tick;
         pushEvent(world, {
@@ -1476,6 +1702,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         machine.state.memory = null;
         tok.value = sum;
         tok.producedByAdderAtTick = world.tick;
+        machineActionOccurredThisTick = true;
         machine.state.activeFlashTicks = 1;
         machine.state.lastActionTick = world.tick;
         pushEvent(world, {
@@ -1489,7 +1716,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       continue;
     }
 
-    // Scales (Весы-сортировщик ⚖): larger exits dir, smaller spawns onto altDir
+    // Scales (Весы-сортировщик ⚖): larger exits dir, smaller spawns onto altDir (or pauses if altDir busy)
     const emitSortedScales = (a: number, b: number, keepTok: Token, removeTok?: Token) => {
       if (a === b) {
         triggerError(
@@ -1504,11 +1731,8 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         machine.coord,
         machine.config.altDir ?? rotateDir(machine.config.dir, 1),
       );
-      const altFree =
-        world.platformHexes.has(hexKey(altCoord)) &&
-        !Array.from(world.tokens.values()).some((t) => hexEqual(t.coord, altCoord)) &&
-        !SOLID_MACHINE_TYPES.has(world.machines.get(hexKey(altCoord))?.type ?? 'conveyor');
-      if (!altFree) {
+      const portState = getSidePortAvailability(altCoord);
+      if (portState === 'blocked_static') {
         triggerError(
           world,
           'Нет свободного гекса для вывода меньшего числа с весов',
@@ -1517,6 +1741,30 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         );
         return false;
       }
+      if (portState === 'occupied_token') {
+        // Hold first value in memory and pause second token on scales until altDir clears
+        if (removeTok) {
+          machine.state.memory = removeTok.value;
+          recordConsumed(removeTok, 'store');
+          world.tokens.delete(removeTok.id);
+        } else {
+          machine.state.memory = a;
+        }
+        keepTok.waitingSidePort = machine.id;
+        machine.state.isWaitingSideExit = true;
+        machine.state.waitTicks = (machine.state.waitTicks ?? 0) + 1;
+        if (machine.state.waitTicks === 1) {
+          pushEvent(world, {
+            type: 'blocked',
+            coord: machine.coord,
+            relatedCoords: [altCoord],
+            message: 'Боковой выход весов ⚖ занят — ожидание очереди',
+            severity: 'warning',
+            badge: '⏳',
+          });
+        }
+        return true;
+      }
       const big = Math.max(a, b);
       const small = Math.min(a, b);
       if (removeTok) {
@@ -1524,6 +1772,9 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         world.tokens.delete(removeTok.id);
       }
       machine.state.memory = null;
+      keepTok.waitingSidePort = undefined;
+      machine.state.isWaitingSideExit = false;
+      machine.state.waitTicks = 0;
       keepTok.value = big;
       keepTok.producedByAdderAtTick = world.tick;
       const smallTok: Token = {
@@ -1536,6 +1787,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         spawnOrder: keepTok.spawnOrder,
       };
       world.tokens.set(smallTok.id, smallTok);
+      machineActionOccurredThisTick = true;
       world.visitedHexes.add(hexKey(altCoord));
       machine.state.activeFlashTicks = 1;
       machine.state.lastActionTick = world.tick;
@@ -1557,7 +1809,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
 
     const tok = tokensHere[0];
     if (tok.producedByAdderAtTick === world.tick) continue;
-    if (!movedTokenIds.has(tok.id)) continue;
+    if (!movedTokenIds.has(tok.id) && tok.waitingSidePort !== machine.id) continue;
 
     const isBonded = world.bonds.some((b) => b.a === tok.id || b.b === tok.id);
     if (isBonded) {
@@ -1574,6 +1826,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       machine.state.memory = tok.value;
       recordConsumed(tok, 'store');
       world.tokens.delete(tok.id);
+      machineActionOccurredThisTick = true;
       machine.state.activeFlashTicks = 1;
       machine.state.lastActionTick = world.tick;
       pushEvent(world, {
@@ -1588,11 +1841,12 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
     }
   }
 
-  // Process Unary Math Pads on newly arrived tokens
+  // Process Unary Math Pads & side-port arithmetic on newly arrived or waiting tokens
   for (const tok of Array.from(world.tokens.values())) {
-    if (!movedTokenIds.has(tok.id)) continue;
     const machine = world.machines.get(hexKey(tok.coord));
     if (!machine) continue;
+    const isWaitingHere = tok.waitingSidePort === machine.id;
+    if (!movedTokenIds.has(tok.id) && !isWaitingHere) continue;
 
     if (machine.type === 'add1') {
       const next = tok.value + 1;
@@ -1602,6 +1856,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       }
       const prev = tok.value;
       tok.value = next;
+      machineActionOccurredThisTick = true;
       machine.state.activeFlashTicks = 1;
       pushEvent(world, { type: 'transform', coord: tok.coord, message: `+1: ${prev} → ${next}`, severity: 'info', badge: '+1' });
     } else if (machine.type === 'sub1') {
@@ -1612,6 +1867,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       }
       const prev = tok.value;
       tok.value = next;
+      machineActionOccurredThisTick = true;
       machine.state.activeFlashTicks = 1;
       pushEvent(world, { type: 'transform', coord: tok.coord, message: `-1: ${prev} → ${next}`, severity: 'info', badge: '−1' });
     } else if (machine.type === 'mul2') {
@@ -1622,6 +1878,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       }
       const prev = tok.value;
       tok.value = next;
+      machineActionOccurredThisTick = true;
       machine.state.activeFlashTicks = 1;
       pushEvent(world, { type: 'transform', coord: tok.coord, message: `×2: ${prev} → ${next}`, severity: 'info', badge: '×2' });
     } else if (machine.type === 'div2') {
@@ -1632,6 +1889,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       }
       const prev = tok.value;
       tok.value = res.result;
+      machineActionOccurredThisTick = true;
       machine.state.activeFlashTicks = 1;
       pushEvent(world, { type: 'transform', coord: tok.coord, message: `÷2: ${prev} → ${res.result}`, severity: 'info', badge: '÷2' });
     } else if (machine.type === 'sqrt') {
@@ -1642,6 +1900,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       }
       const prev = tok.value;
       tok.value = res.result;
+      machineActionOccurredThisTick = true;
       machine.state.activeFlashTicks = 1;
       pushEvent(world, { type: 'transform', coord: tok.coord, message: `√x: √${prev} → ${res.result}`, severity: 'info', badge: `√=${res.result}` });
     } else if (machine.type === 'neg') {
@@ -1652,25 +1911,42 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         return world;
       }
       tok.value = next;
+      machineActionOccurredThisTick = true;
       machine.state.activeFlashTicks = 1;
       pushEvent(world, { type: 'transform', coord: tok.coord, message: `−x: ${prev} → ${next}`, severity: 'info', badge: '−x' });
     } else if (machine.type === 'divmod') {
       const b = machine.config.divisor ?? 2;
       const { q, r } = euclideanDivMod(tok.value, b);
-      const prev = tok.value;
-      tok.value = q;
       const remCoord = hexNeighbor(
         machine.coord,
         machine.config.altDir ?? rotateDir(machine.config.dir, 1),
       );
-      const remFree =
-        world.platformHexes.has(hexKey(remCoord)) &&
-        !Array.from(world.tokens.values()).some((t) => hexEqual(t.coord, remCoord)) &&
-        !SOLID_MACHINE_TYPES.has(world.machines.get(hexKey(remCoord))?.type ?? 'conveyor');
-      if (!remFree) {
+      const portState = getSidePortAvailability(remCoord);
+      if (portState === 'blocked_static') {
         triggerError(world, 'Нет места для вывода остатка от деления', [machine.coord, remCoord], 'blocked');
         return world;
       }
+      if (portState === 'occupied_token') {
+        tok.waitingSidePort = machine.id;
+        machine.state.isWaitingSideExit = true;
+        machine.state.waitTicks = (machine.state.waitTicks ?? 0) + 1;
+        if (machine.state.waitTicks === 1) {
+          pushEvent(world, {
+            type: 'blocked',
+            coord: machine.coord,
+            relatedCoords: [remCoord],
+            message: 'Боковой выход делителя ÷ занят — ожидание очереди',
+            severity: 'warning',
+            badge: '⏳',
+          });
+        }
+        continue;
+      }
+      const prev = tok.value;
+      tok.value = q;
+      tok.waitingSidePort = undefined;
+      machine.state.isWaitingSideExit = false;
+      machine.state.waitTicks = 0;
       const remTok: Token = {
         id: `t_${world.nextTokenId++}`,
         value: r,
@@ -1681,6 +1957,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         spawnOrder: tok.spawnOrder,
       };
       world.tokens.set(remTok.id, remTok);
+      machineActionOccurredThisTick = true;
       world.visitedHexes.add(hexKey(remCoord));
       machine.state.activeFlashTicks = 1;
       pushEvent(world, {
@@ -1711,17 +1988,12 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         );
         return world;
       }
-      const prev = tok.value;
-      const half = divRes.result;
       const altCoord = hexNeighbor(
         machine.coord,
         machine.config.altDir ?? rotateDir(machine.config.dir, 1),
       );
-      const altFree =
-        world.platformHexes.has(hexKey(altCoord)) &&
-        !Array.from(world.tokens.values()).some((t) => hexEqual(t.coord, altCoord)) &&
-        !SOLID_MACHINE_TYPES.has(world.machines.get(hexKey(altCoord))?.type ?? 'conveyor');
-      if (!altFree) {
+      const portState = getSidePortAvailability(altCoord);
+      if (portState === 'blocked_static') {
         triggerError(
           world,
           'Нет свободного гекса для второй половины раскольника ½',
@@ -1730,7 +2002,28 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         );
         return world;
       }
+      if (portState === 'occupied_token') {
+        tok.waitingSidePort = machine.id;
+        machine.state.isWaitingSideExit = true;
+        machine.state.waitTicks = (machine.state.waitTicks ?? 0) + 1;
+        if (machine.state.waitTicks === 1) {
+          pushEvent(world, {
+            type: 'blocked',
+            coord: machine.coord,
+            relatedCoords: [altCoord],
+            message: 'Боковой выход раскольника ½ занят — ожидание очереди',
+            severity: 'warning',
+            badge: '⏳',
+          });
+        }
+        continue;
+      }
+      const prev = tok.value;
+      const half = divRes.result;
       tok.value = half;
+      tok.waitingSidePort = undefined;
+      machine.state.isWaitingSideExit = false;
+      machine.state.waitTicks = 0;
       const splitTok: Token = {
         id: `t_${world.nextTokenId++}`,
         value: half,
@@ -1741,6 +2034,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         spawnOrder: tok.spawnOrder,
       };
       world.tokens.set(splitTok.id, splitTok);
+      machineActionOccurredThisTick = true;
       world.visitedHexes.add(hexKey(altCoord));
       machine.state.activeFlashTicks = 1;
       machine.state.lastActionTick = world.tick;
@@ -1767,6 +2061,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       const tB = updatedHexMap.get(hexKey(neighbor));
       if (tA && tB && hexDistance(tA.coord, tB.coord) === 1) {
         if (addBondCanonical(world, tA.id, tB.id)) {
+          machineActionOccurredThisTick = true;
           machine.state.activeFlashTicks = 1;
           pushEvent(world, {
             type: 'weld',
@@ -1787,6 +2082,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
         const idx = world.bonds.findIndex((e) => e.a === a && e.b === b);
         if (idx !== -1) {
           world.bonds.splice(idx, 1);
+          machineActionOccurredThisTick = true;
           machine.state.activeFlashTicks = 1;
           pushEvent(world, {
             type: 'cut',
@@ -1828,6 +2124,7 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       }
     }
     world.bonds = world.bonds.filter((b) => !compSet.has(b.a) && !compSet.has(b.b));
+    machineActionOccurredThisTick = true;
     machine.state.activeFlashTicks = 1;
     machine.state.lastActionTick = world.tick;
     pushEvent(world, {
@@ -2058,6 +2355,40 @@ export function stepSimulation(world: SimulationWorld): SimulationWorld {
       message: `Цель выполнена за ${world.tick} тактов!`,
       severity: 'success',
     });
+  }
+
+  // Deadlock check for waiting side-port queues: if machines are holding tokens on blocked altDir
+  // while zero tokens moved/transformed, no non-waiting component has drive, and no spawner can emit
+  if (world.status === 'running' && !machineActionOccurredThisTick && world.tokens.size > 0) {
+    const waitingMachines = Array.from(world.machines.values()).filter(
+      (m) => m.state.isWaitingSideExit,
+    );
+    if (waitingMachines.length > 0) {
+      const anyActiveSpawnerPending = Array.from(world.machines.values()).some((m) => {
+        if (m.type !== 'spawner') return false;
+        const seq = m.config.sequence ?? [];
+        if (seq.length === 0) return false;
+        const hasMore = m.config.loopSequence || m.state.spawnIndex < seq.length;
+        if (!hasMore) return false;
+        const out = hexNeighbor(m.coord, m.config.dir);
+        const outFree = !Array.from(world.tokens.values()).some((t) => hexEqual(t.coord, out));
+        return outFree;
+      });
+      const anyNonWaitingDriven = postComponents.some((comp) => {
+        const compToks = comp.tokenIds.map((id) => world.tokens.get(id)!);
+        if (compToks.some((t) => t.waitingSidePort)) return false;
+        return hasNextTickDrive(compToks);
+      });
+      if (!anyActiveSpawnerPending && !anyNonWaitingDriven) {
+        triggerError(
+          world,
+          'Затор на боковом выходе станка: соседний гекс занят и поток остановился',
+          waitingMachines.map((m) => m.coord),
+          'blocked',
+        );
+        return world;
+      }
+    }
   }
 
   if (!world.infiniteMode && world.status === 'running' && world.tick >= MAX_SIMULATION_TICKS) {

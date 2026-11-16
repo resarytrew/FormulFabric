@@ -2,7 +2,12 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { getConnectedComponents, getMachineFootprint } from '../engine/hex-engine';
+import {
+  getConnectedComponents,
+  getMachineFootprint,
+  getRotationSweptHexes,
+  SOLID_MACHINE_TYPES,
+} from '../engine/hex-engine';
 import {
   dirToWorldYaw,
   HEX_SIZE,
@@ -55,6 +60,7 @@ import {
   evaluateConsumedTokenTimeline,
   evaluateMachineActionCurves,
   evaluateTokenTickTimeline,
+  evaluateTransportCurve,
   TOKEN_ARRIVAL_ALPHA,
   TOKEN_TRIGGER_ALPHA,
 } from './tokenAnimationTimeline';
@@ -1650,6 +1656,22 @@ export function HexScene3D({
         tip.rotation.x = Math.PI / 2;
         addInkOutline(tip, inkColor, 0.02);
         tacticalGroup.add(tip);
+
+        const wNow = propsRef.current.world;
+        const tokAtGrab = Array.from(wNow.tokens.values()).find((t) => hexEqual(t.coord, grabCoord));
+        if (tokAtGrab) {
+          const comp = getConnectedComponents(wNow).find((c) => c.tokenIds.includes(tokAtGrab.id));
+          const compIds = comp?.tokenIds ?? [tokAtGrab.id];
+          for (const tid of compIds) {
+            const pt = wNow.tokens.get(tid);
+            if (!pt) continue;
+            for (const sh of getRotationSweptHexes(pt.coord, coord, cwSteps)) {
+              const sm = wNow.machines.get(hexKey(sh));
+              const blockedSolid = Boolean(sm && SOLID_MACHINE_TYPES.has(sm.type));
+              addTacticalHexRing(sh, blockedSolid ? 0xef4444 : 0x2dd4bf, 0.052);
+            }
+          }
+        }
       } else if (mType === 'sink') {
         const wNow = propsRef.current.world;
         const cKey = hexKey(coord);
@@ -2120,6 +2142,7 @@ export function HexScene3D({
           alpha,
           isMoving,
           moveSource: tok.moveSource,
+          pushChainIndex: tok.pushChainIndex,
           hasAccent,
         });
         const displayValue = tl.showTransformed ? tok.value : prevVal;
@@ -2171,61 +2194,26 @@ export function HexScene3D({
           wx = pW.x + (dx * cos - dz * sin);
           wz = pW.z + (dx * sin + dz * cos);
           const isSwap180 = Math.abs(tok.rotatedFrom.angleDelta) > 2;
-          hop = Math.sin(mT * Math.PI) * (isSwap180 ? 0.34 : 0.16);
-          pitchZ = Math.sin(mT * Math.PI) * 0.08 * Math.sign(tok.rotatedFrom.angleDelta);
+          hop = Math.sin(mT * Math.PI) * (isSwap180 ? 0.36 : 0.17);
+          const armSwing = Math.sin(mT * Math.PI);
+          pitchZ = armSwing * 0.1 * Math.sign(tok.rotatedFrom.angleDelta);
+          stretchXZ = 1 + armSwing * 0.04;
+          stretchY = 1 - armSwing * 0.04;
         } else {
           const sW = hexToWorld(tok.prevCoord);
           const eW = hexToWorld(tok.coord);
           if (isMoving && mT < 1) {
-            const src = tok.moveSource ?? 'conveyor';
-            let tCurve = mT;
-            if (src === 'pusher') {
-              const p = Math.min(1, mT / 0.58);
-              const ballistic = 1 - Math.pow(1 - p, 2.8);
-              const recoil =
-                mT > 0.58
-                  ? Math.sin((mT - 0.58) * Math.PI * 2.2) * Math.exp(-(mT - 0.58) * 5.2) * 0.025
-                  : 0;
-              tCurve = ballistic + recoil;
-              hop = Math.sin(Math.min(1, mT / 0.72) * Math.PI) * 0.08;
-              const sq =
-                mT < 0.55
-                  ? Math.sin((mT / 0.55) * Math.PI) * 0.12
-                  : -Math.sin(Math.min(1, (mT - 0.55) / 0.45) * Math.PI) * 0.06;
-              stretchXZ = 1 + sq * 0.65;
-              stretchY = 1 - sq;
-            } else if (src === 'jump') {
-              tCurve = 1 - Math.pow(1 - mT, 2.05);
-              hop = Math.sin(mT * Math.PI) * 0.72;
-              const landSquash =
-                mT > 0.85 ? Math.sin(((mT - 0.85) / 0.15) * Math.PI) * 0.12 : 0;
-              stretchXZ = 1 + landSquash * 0.6;
-              stretchY = 1 - landSquash;
-            } else if (src === 'magnet') {
-              tCurve =
-                mT < 0.45
-                  ? 0.22 * Math.pow(mT / 0.45, 2)
-                  : 0.22 + 0.78 * (1 - Math.pow(1 - (mT - 0.45) / 0.55, 2.4));
-              hop = Math.sin(mT * Math.PI) * 0.18;
-            } else if (src === 'spawner') {
-              tCurve = 1 - Math.pow(1 - mT, 2.2);
-              hop = Math.abs(Math.sin(mT * Math.PI * 1.4)) * (1 - mT) * 0.16;
-            } else if (src === 'split') {
-              tCurve = mT;
-              hop = Math.sin(mT * Math.PI) * 0.2;
-            } else {
-              // Conveyor steady traction glide
-              tCurve = mT < 0.5 ? 2 * mT * mT : 1 - Math.pow(-2 * mT + 2, 2) / 2;
-              hop = Math.sin(mT * Math.PI) * 0.022;
-            }
-            wx = THREE.MathUtils.lerp(sW.x, eW.x, tCurve);
-            wz = THREE.MathUtils.lerp(sW.z, eW.z, tCurve);
+            const kin = evaluateTransportCurve(mT, tok.moveSource ?? 'conveyor');
+            hop = kin.hop;
+            stretchXZ = kin.stretchXZ;
+            stretchY = kin.stretchY;
+            wx = THREE.MathUtils.lerp(sW.x, eW.x, kin.tCurve);
+            wz = THREE.MathUtils.lerp(sW.z, eW.z, kin.tCurve);
 
             const dx = eW.x - sW.x;
             const dz = eW.z - sW.z;
             const dist = Math.hypot(dx, dz) || 1;
-            const tiltMag = src === 'pusher' ? 0.12 : 0.07;
-            const tiltEnv = Math.sin(mT * Math.PI) * tiltMag;
+            const tiltEnv = Math.sin(Math.min(1, Math.max(0, mT)) * Math.PI) * kin.tiltMag;
             pitchX = (dz / dist) * tiltEnv;
             pitchZ = -(dx / dist) * tiltEnv;
           } else {
@@ -2241,7 +2229,16 @@ export function HexScene3D({
           stretchY *= 1 - ant * 0.12;
         }
 
+        // Held/queued token on blocked side-port breathes gently in amber readiness
+        const isWaitingSide = Boolean(tok.waitingSidePort);
+        if (isWaitingSide) {
+          const holdWave = Math.sin(elapsed * 5.2 + tok.spawnOrder) * 0.05;
+          stretchXZ *= 1 + holdWave;
+          stretchY *= 1 - holdWave * 0.8;
+        }
+
         // Emphasized transformation pop & golden-white glow after TOKEN_TRIGGER_ALPHA
+        let glowColor = 0xffe082;
         let glowIntensity = 0;
         if (tl.transformAccentT > 0 && tl.transformAccentT < 1) {
           const tt = tl.transformAccentT;
@@ -2252,17 +2249,22 @@ export function HexScene3D({
           stretchY *= 1 + Math.sin(tt * Math.PI) * 0.24 * amp - pulse * 0.35;
           yawSpin = valueChanged ? Math.sin(tt * Math.PI) * 0.32 : 0;
           glowIntensity = Math.pow(1 - tt, 1.35) * (valueChanged ? 1.15 : 0.65);
+        } else if (isWaitingSide) {
+          glowColor = 0xf59e0b;
+          glowIntensity = 0.42 + (Math.sin(elapsed * 5.5 + tok.spawnOrder) + 1) * 0.18;
         } else if (vis.popAge < 1) {
           const popWave = Math.sin(vis.popAge * Math.PI * 1.5) * (1 - vis.popAge) * 0.22;
           stretchXZ *= 1 + popWave;
           stretchY *= 1 / Math.sqrt(Math.max(0.65, 1 + popWave));
         }
-        applyTokenGlow(vis.group, 0xffe082, glowIntensity);
+        applyTokenGlow(vis.group, glowColor, glowIntensity);
 
         const bob =
           tl.isDwelling || tl.transformAccentT > 0
             ? 0
-            : Math.sin(elapsed * 2.5 + tok.spawnOrder) * 0.014;
+            : isWaitingSide
+              ? Math.sin(elapsed * 4.5 + tok.spawnOrder) * 0.025 + 0.04
+              : Math.sin(elapsed * 2.5 + tok.spawnOrder) * 0.014;
         const wy = bob + hop;
         vis.group.position.set(wx, wy, wz);
         vis.group.rotation.set(pitchX, yawSpin, pitchZ);
@@ -2409,6 +2411,8 @@ export function HexScene3D({
 
         const mData = wSnap.machines.get(k);
         const isFlashing = (mData?.state.activeFlashTicks ?? 0) > 0;
+        const isWaitingExit = Boolean(mData?.state.isWaitingSideExit);
+        const beltSpeedMul = isWaitingExit ? 0.18 : 1.0;
         const { stroke, flashArc } = evaluateMachineActionCurves(alpha, isFlashing);
 
         mGroup.traverse((child) => {
@@ -2416,18 +2420,18 @@ export function HexScene3D({
           if (!anim) return;
 
           if (anim === 'conveyorRoller') {
-            const ph = ((child.userData.phase as number) ?? 0) + dt * (5.2 + flashArc * 5.0);
+            const ph = ((child.userData.phase as number) ?? 0) + dt * (5.2 + flashArc * 5.0) * beltSpeedMul;
             child.userData.phase = ph;
             child.rotation.z = -ph;
           } else if (anim === 'conveyorGear') {
             const sign = (child.userData.gearSign as number) ?? -1;
-            const ph = ((child.userData.phase as number) ?? 0) + dt * (4.0 + flashArc * 4.0);
+            const ph = ((child.userData.phase as number) ?? 0) + dt * (4.0 + flashArc * 4.0) * beltSpeedMul;
             child.userData.phase = ph;
             child.rotation.z = sign * ph;
           } else if (anim === 'conveyorTread') {
             const idx = (child.userData.treadIdx as number) ?? 0;
             const count = (child.userData.treadCount as number) ?? 6;
-            const beltPhase = ((child.userData.beltPhase as number) ?? 0) + dt * (0.95 + flashArc * 0.65);
+            const beltPhase = ((child.userData.beltPhase as number) ?? 0) + dt * (0.95 + flashArc * 0.65) * beltSpeedMul;
             child.userData.beltPhase = beltPhase;
             const phase = ((beltPhase + idx / count) % 1 + 1) % 1;
 
@@ -2538,21 +2542,23 @@ export function HexScene3D({
             if (isFlashing && moveNorm < 1) {
               const dirSign = child.userData.cw ? -1 : 1;
               child.rotation.y = dirSign * (Math.PI / 3) * (1 - moveEase);
-              child.position.y = Math.sin(moveNorm * Math.PI) * 0.08;
+              child.position.y = Math.sin(moveNorm * Math.PI) * 0.085;
+              child.rotation.z = dirSign * Math.sin(moveNorm * Math.PI) * 0.07;
             } else {
               child.rotation.y = 0;
               child.position.y = 0;
+              child.rotation.z = 0;
             }
           } else if (anim === 'rotatorBoom') {
-            child.position.x = isFlashing ? stroke * 0.06 : 0;
+            child.position.x = isFlashing ? stroke * 0.07 : 0;
           } else if (anim === 'rotatorClaw') {
             const side = (child.userData.side as number) ?? 1;
-            const grip = isFlashing ? -0.15 : Math.sin(elapsed * 2.4) * 0.05;
+            const grip = isFlashing ? -0.18 : Math.sin(elapsed * 2.4) * 0.05;
             child.rotation.y = side * (-0.32 + grip);
           } else if (anim === 'pusher') {
-            child.position.x = stroke * 0.56;
+            child.position.x = stroke * 0.58;
           } else if (anim === 'pusherCoil') {
-            child.scale.x = 1 + stroke * 1.5;
+            child.scale.x = 1 + stroke * 1.55;
           } else if (anim === 'pusherGauge') {
             child.rotation.z = 0.55 - stroke * 1.45 + Math.sin(elapsed * 7) * 0.04;
           } else if (anim === 'weldArm') {
@@ -2605,7 +2611,8 @@ export function HexScene3D({
           } else if (anim === 'counterGear') {
             const sign = (child.userData.gearSign as number) ?? 1;
             const ratio = (child.userData.gearRatio as number) ?? 1;
-            const ph = ((child.userData.phase as number) ?? 0) + dt * (2.6 + flashArc * 5.2) * ratio;
+            const gearMul = isWaitingExit ? 0.15 : 1.0;
+            const ph = ((child.userData.phase as number) ?? 0) + dt * (2.6 + flashArc * 5.2) * ratio * gearMul;
             child.userData.phase = ph;
             child.rotation.z = sign * ph;
           } else if (anim === 'filterBlade') {
@@ -2648,17 +2655,19 @@ export function HexScene3D({
               ? 0.28 * flashArc
               : Math.sin(elapsed * 3 + pIdx * 2.09) * 0.09;
           } else if (anim === 'halverWedge') {
-            child.position.y = 0.56 - stroke * 0.22 + Math.sin(elapsed * 2.6) * 0.015;
+            const holdLift = isWaitingExit ? 0.12 + Math.sin(elapsed * 5.2) * 0.025 : 0;
+            child.position.y = 0.56 - stroke * 0.22 + holdLift + Math.sin(elapsed * 2.6) * 0.015;
           } else if (anim === 'swapperTurntable') {
             child.rotation.y =
               isFlashing && moveNorm < 1
                 ? Math.PI * (1 - moveEase)
                 : Math.sin(elapsed * 1.8) * 0.04;
           } else if (anim === 'jumperSpring') {
-            child.scale.y = 1 + stroke * 0.48;
-            child.position.y = 0.16 + stroke * 0.14;
+            child.scale.y = 1 + stroke * 0.52;
+            child.position.y = 0.16 + stroke * 0.15;
           } else if (anim === 'scalesBeam') {
-            child.rotation.x = Math.sin(elapsed * 2.4) * 0.08 + stroke * 0.28;
+            const waitTilt = isWaitingExit ? 0.22 + Math.sin(elapsed * 4.6) * 0.035 : 0;
+            child.rotation.x = Math.sin(elapsed * 2.4) * 0.08 + stroke * 0.28 + waitTilt;
           }
 
           if (

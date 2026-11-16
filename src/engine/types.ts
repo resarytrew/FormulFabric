@@ -63,6 +63,9 @@ export interface MachineState {
   memoryTokenColor?: number;
   activeFlashTicks: number; // Visual feedback ticks
   lastActionTick: number;
+  /** True while holding a processed token waiting for a temporarily occupied altDir hex */
+  isWaitingSideExit?: boolean;
+  waitTicks?: number;
 }
 
 export interface MachineInstance {
@@ -94,6 +97,10 @@ export interface Token {
   prevCoord: AxialCoord;
   /** Mechanical source that drove this token on the current tick (for 3D physics curves) */
   moveSource?: TokenMoveSource;
+  /** 0-based index along a pusher-driven sphere chain (0, 1, 2) for cascading 3D impulse */
+  pushChainIndex?: number;
+  /** Machine ID holding this token until its blocked altDir port clears */
+  waitingSidePort?: string;
   /** If moved via 60-deg rotation around a pivot */
   rotatedFrom?: {
     pivot: AxialCoord;

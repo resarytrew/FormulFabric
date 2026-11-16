@@ -16,6 +16,8 @@ export interface TokenTimelineInput {
   alpha: number;
   isMoving: boolean;
   moveSource?: TokenMoveSource;
+  /** 0-based domino index along a pusher-driven sphere train (0, 1, 2) */
+  pushChainIndex?: number;
   /** True when value changed OR machine transformed/welded/cut/rotated this token on this tick */
   hasAccent: boolean;
 }
@@ -35,6 +37,14 @@ export interface TokenTimelineState {
   transformAccentT: number;
 }
 
+export interface TransportKinematics {
+  tCurve: number;
+  hop: number;
+  stretchXZ: number;
+  stretchY: number;
+  tiltMag: number;
+}
+
 function clamp01(v: number): number {
   if (v <= 0) return 0;
   if (v >= 1) return 1;
@@ -44,6 +54,90 @@ function clamp01(v: number): number {
 function smoothstep01(t: number): number {
   const c = clamp01(t);
   return c * c * (3 - 2 * c);
+}
+
+/**
+ * Evaluates source-specific physical travel curve, vertical arc/hop, squash-and-stretch,
+ * and forward momentum tilt over normalized travel progress mT in [0, 1].
+ */
+export function evaluateTransportCurve(
+  mT: number,
+  src: TokenMoveSource = 'conveyor',
+): TransportKinematics {
+  const u = clamp01(mT);
+  if (src === 'pusher') {
+    const p = Math.min(1, u / 0.56);
+    const ballistic = 1 - Math.pow(1 - p, 2.85);
+    const recoil =
+      u > 0.56
+        ? Math.sin((u - 0.56) * Math.PI * 2.4) * Math.exp(-(u - 0.56) * 5.6) * 0.032
+        : 0;
+    const sq =
+      u < 0.54
+        ? Math.sin((u / 0.54) * Math.PI) * 0.13
+        : -Math.sin(Math.min(1, (u - 0.54) / 0.46) * Math.PI) * 0.065;
+    return {
+      tCurve: ballistic + recoil,
+      hop: Math.sin(Math.min(1, u / 0.72) * Math.PI) * 0.09,
+      stretchXZ: 1 + sq * 0.65,
+      stretchY: 1 - sq,
+      tiltMag: 0.14,
+    };
+  }
+  if (src === 'jump') {
+    const tCurve = 1 - Math.pow(1 - u, 1.95);
+    // Launch stretch on ascent, soft squash-and-recover on touchdown
+    const launchStretch = u < 0.28 ? Math.sin((u / 0.28) * Math.PI) * 0.14 : 0;
+    const landSquash = u > 0.82 ? Math.sin(((u - 0.82) / 0.18) * Math.PI) * 0.16 : 0;
+    return {
+      tCurve,
+      hop: Math.sin(u * Math.PI) * 0.82,
+      stretchXZ: 1 - launchStretch * 0.55 + landSquash * 0.72,
+      stretchY: 1 + launchStretch - landSquash,
+      tiltMag: 0.11,
+    };
+  }
+  if (src === 'magnet') {
+    const tCurve =
+      u < 0.44
+        ? 0.2 * Math.pow(u / 0.44, 2.15)
+        : 0.2 + 0.8 * (1 - Math.pow(1 - (u - 0.44) / 0.56, 2.55));
+    const snapSquash = u > 0.84 ? Math.sin(((u - 0.84) / 0.16) * Math.PI) * 0.08 : 0;
+    return {
+      tCurve,
+      hop: Math.sin(u * Math.PI) * 0.21,
+      stretchXZ: 1 + snapSquash * 0.5,
+      stretchY: 1 - snapSquash * 0.6,
+      tiltMag: 0.1,
+    };
+  }
+  if (src === 'spawner') {
+    return {
+      tCurve: 1 - Math.pow(1 - u, 2.2),
+      hop: Math.abs(Math.sin(u * Math.PI * 1.4)) * (1 - u) * 0.16,
+      stretchXZ: 1,
+      stretchY: 1,
+      tiltMag: 0.07,
+    };
+  }
+  if (src === 'split') {
+    return {
+      tCurve: u,
+      hop: Math.sin(u * Math.PI) * 0.22,
+      stretchXZ: 1,
+      stretchY: 1,
+      tiltMag: 0.08,
+    };
+  }
+  // Conveyor steady belt traction with smooth engagement & docking ease
+  const tCurve = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+  return {
+    tCurve,
+    hop: Math.sin(u * Math.PI) * 0.022,
+    stretchXZ: 1,
+    stretchY: 1,
+    tiltMag: 0.065,
+  };
 }
 
 /**
@@ -80,7 +174,14 @@ export function evaluateTokenTickTimeline(input: TokenTimelineInput): TokenTimel
 
   let moveT = 1;
   if (input.isMoving) {
-    moveT = a >= TOKEN_ARRIVAL_ALPHA ? 1 : clamp01(a / TOKEN_ARRIVAL_ALPHA);
+    if (a >= TOKEN_ARRIVAL_ALPHA) {
+      moveT = 1;
+    } else {
+      const chainIdx = Math.max(0, Math.min(2, input.pushChainIndex ?? 0));
+      const delay = input.moveSource === 'pusher' ? chainIdx * 0.055 : 0;
+      const span = Math.max(0.08, TOKEN_ARRIVAL_ALPHA - delay);
+      moveT = clamp01((a - delay) / span);
+    }
   }
 
   const isDwelling = a >= TOKEN_ARRIVAL_ALPHA && a < TOKEN_TRIGGER_ALPHA;
@@ -108,7 +209,7 @@ export function evaluateTokenTickTimeline(input: TokenTimelineInput): TokenTimel
 /**
  * Evaluates mechanical actuator power stroke [0..1] synchronized to TOKEN_TRIGGER_ALPHA:
  * machines stay poised while tokens travel [0..0.38], wind up sharply into impact at 0.56,
- * and smoothly cushion back by 1.0.
+ * and smoothly cushion back by 1.0 with slight damped settling.
  */
 export function evaluateMachineActionCurves(
   alpha: number,
@@ -128,7 +229,9 @@ export function evaluateMachineActionCurves(
     return { stroke: eased, flashArc: eased };
   }
   const returnT = (a - TOKEN_TRIGGER_ALPHA) / (1 - TOKEN_TRIGGER_ALPHA);
-  const stroke = Math.cos(returnT * (Math.PI / 2));
+  const baseReturn = Math.cos(returnT * (Math.PI / 2));
+  const settle = Math.sin(returnT * Math.PI * 2.2) * Math.exp(-returnT * 4.5) * 0.06;
+  const stroke = Math.max(-0.08, baseReturn + settle);
   const flashArc = Math.pow(Math.max(0, 1 - returnT), 0.75);
   return { stroke, flashArc };
 }
