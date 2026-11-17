@@ -1,4 +1,6 @@
 import { hexKey } from './hex-math';
+import { lintPattern } from './pattern-lint';
+export { lintPattern };
 import type {
   AxialCoord,
   HexKey,
@@ -58,6 +60,7 @@ export interface PlacementIssue {
 
 export type PlacementIssueCode =
   | 'invalid-data'
+  | 'invalid-config'
   | 'invalid-direction'
   | 'unknown-pattern'
   | 'invalid-pattern'
@@ -195,127 +198,6 @@ function finalMachineLabel(machine: FinalMachine): string {
     ? `${machine.type} #${machine.origin.slice('preset:'.length)} (исходный${machine.locked ? ', фиксированный' : ''})`
     : `${machine.type} #${machine.origin.slice('player:'.length)} (установлен игроком)`;
 }
-
-/**
- * Structural check of a receiver target pattern. Geometry-only checks cannot
- * catch a duplicated vertex or an edge pointing outside the graph, and those
- * would silently produce a receiver nobody can ever fill.
- *
- * The linter is stricter than the type on purpose: patterns arrive from
- * persisted saves and level data, so a missing `edges` array, an unknown `mode`
- * or a malformed `growth_ladder` step must be a reported error rather than a
- * runtime TypeError inside the world builder.
- */
-export function lintPattern(pattern: TargetPattern): string[] {
-  const errors: string[] = [];
-  if (!isRecord(pattern)) {
-    return ['образец приёмника отсутствует или повреждён'];
-  }
-  if (!Array.isArray(pattern.nodes) || pattern.nodes.length === 0) {
-    return ['образец приёмника не содержит ни одной вершины'];
-  }
-  // Both arrays are dereferenced when the world is built, so a missing one is a
-  // hard error here rather than a TypeError later.
-  if (!Array.isArray(pattern.edges)) {
-    errors.push('образец приёмника не содержит списка связей (edges)');
-  }
-  if (!TARGET_MODES.has(pattern.mode)) {
-    errors.push(`неизвестный режим проверки приёмника: ${String(pattern.mode)}`);
-  }
-  if (typeof pattern.rotationInvariant !== 'boolean') {
-    errors.push('образец приёмника не задаёт признак rotationInvariant');
-  }
-  if (typeof pattern.label !== 'string') {
-    errors.push('образец приёмника не содержит подписи (label)');
-  }
-
-  const declaredOffsets = new Set<HexKey>();
-  pattern.nodes.forEach((node, idx) => {
-    if (!isRecord(node) || !isValidCoord(node.offset)) {
-      errors.push(`вершина ${idx + 1} образца имеет неверные координаты`);
-      return;
-    }
-    const declaredKey = hexKey(node.offset);
-    if (declaredOffsets.has(declaredKey)) {
-      errors.push(`вершина ${idx + 1} образца повторяет координаты (${declaredKey})`);
-    }
-    declaredOffsets.add(declaredKey);
-    if (node.value !== undefined && !Number.isInteger(node.value)) {
-      errors.push(`вершина ${idx + 1} образца имеет нецелое значение ${String(node.value)}`);
-    }
-  });
-
-  const edges = Array.isArray(pattern.edges) ? pattern.edges : [];
-  const pairs = new Set<HexKey>();
-  edges.forEach((edge, idx) => {
-    const fromIdx = edge?.fromIdx;
-    const toIdx = edge?.toIdx;
-    if (
-      !Number.isInteger(fromIdx) ||
-      !Number.isInteger(toIdx) ||
-      fromIdx < 0 ||
-      toIdx < 0 ||
-      fromIdx >= pattern.nodes.length ||
-      toIdx >= pattern.nodes.length
-    ) {
-      errors.push(`связь ${idx + 1} образца ссылается на несуществующую вершину`);
-      return;
-    }
-    if (fromIdx === toIdx) {
-      errors.push(`связь ${idx + 1} образца соединяет вершину саму с собой`);
-      return;
-    }
-    const pairKey = `${Math.min(fromIdx, toIdx)}-${Math.max(fromIdx, toIdx)}`;
-    if (pairs.has(pairKey)) {
-      errors.push(`связь ${idx + 1} образца дублирует уже объявленную связь`);
-    }
-    pairs.add(pairKey);
-  });
-
-  if (pattern.expectedValues !== undefined) {
-    if (!Array.isArray(pattern.expectedValues) || pattern.expectedValues.some((v) => !Number.isInteger(v))) {
-      errors.push('ожидаемые значения приёмника (expectedValues) должны быть целыми числами');
-    }
-  }
-  // Expected node rows are matched per delivery against `pattern.nodes`; a row
-  // of the wrong length can never match and would make the receiver unusable.
-  if (pattern.expectedNodeValues !== undefined) {
-    if (!Array.isArray(pattern.expectedNodeValues)) {
-      errors.push('ожидаемые полимеры приёмника (expectedNodeValues) должны быть массивом');
-    } else {
-      pattern.expectedNodeValues.forEach((row, idx) => {
-        if (
-          !Array.isArray(row) ||
-          row.length !== pattern.nodes.length ||
-          row.some((v) => !Number.isInteger(v))
-        ) {
-          errors.push(
-            `ожидаемый полимер ${idx + 1} образца описывает ${Array.isArray(row) ? row.length : 0} звеньев вместо ${pattern.nodes.length}`,
-          );
-        }
-      });
-    }
-  }
-
-  if (pattern.mode === 'sum_shape' && !Number.isFinite(pattern.requiredSum as number)) {
-    errors.push('образец режима «сохрани форму» не задаёт требуемую сумму');
-  }
-  if (pattern.mode === 'growth_ladder') {
-    const step = pattern.ladderStep;
-    if (!isRecord(step) || (step.op !== 'add' && step.op !== 'mul') || !Number.isFinite(step.value as number) || (step.op === 'mul' && (step.value as number) === 0)) {
-      errors.push('образец режима «лестница» не задаёт корректный шаг роста (op: add|mul, value ≠ 0 для mul)');
-    }
-  }
-
-  return errors;
-}
-
-const TARGET_MODES: ReadonlySet<unknown> = new Set<TargetPattern['mode']>([
-  'exact',
-  'sum_shape',
-  'beam_balance',
-  'growth_ladder',
-]);
 
 /**
  * The arrangement the world builder will actually create.

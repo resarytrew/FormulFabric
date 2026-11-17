@@ -10,7 +10,9 @@ import {
   validateLevelFootprintIssues,
   type PlacementIssue,
 } from './placement-validation';
-import type { AxialCoord, HexKey, LevelDefinition, MachineConfig, MachineInstance, MachineType, SimulationWorld } from './types';
+import { validateMachineConfig } from './machine-config';
+import { getRequiredBySink } from './verification';
+import type { AxialCoord, HexKey, LevelDefinition, MachineConfig, MachineInstance, MachineType, SimulationWorld, SinkRequirements } from './types';
 
 export { getMachineFootprint, getMachineOccupiedHexes } from './placement-validation';
 export type { PlacedMachine } from './placement-validation';
@@ -166,12 +168,14 @@ export function validateLevelPlacementIssues(
         }
       }
     }
-    if (!Number.isInteger(b.config.dir) || b.config.dir < 0 || b.config.dir > 5 ||
-      (b.config.altDir !== undefined && (!Number.isInteger(b.config.altDir) || b.config.altDir < 0 || b.config.altDir > 5))) {
+    // Параметры механизма отклоняются до запуска, а не исправляются молча.
+    // Для приёмников образцы проверяются выше (lintPattern), здесь —
+    // направления, делители, фильтры, ротаторы и последовательности.
+    for (const message of validateMachineConfig(b.type, b.config, level)) {
       issues.push(
         issue(
-          'invalid-direction',
-          `Некорректное направление механизма на (${b.coord.q}, ${b.coord.r})`,
+          'invalid-config',
+          `${b.type} на (${b.coord.q}, ${b.coord.r}): ${message}`,
           [b.coord],
           index,
         ),
@@ -395,13 +399,15 @@ export function createWorldFromLevel(
   }
 
   let requiredDeliveries = level.requiredDeliveries;
-  if (expectedSinkValues) {
-    const totalExpected = Object.values(expectedSinkValues).reduce((sum, arr) => sum + arr.length, 0);
-    if (totalExpected > 0) {
-      requiredDeliveries = totalExpected;
-    }
-  } else if (expectedSinkPolymers) {
-    const totalExpected = Object.values(expectedSinkPolymers).reduce((sum, arr) => sum + arr.length, 0);
+  // Объединяем оба вида ожиданий по каждому приёмнику отдельно: проверка
+  // значения и структуры ОДНОЙ доставки не суммируются. Заданию нужен потолок
+  // по каждому приёмнику, поэтому требования хранятся на уровне мира, а не
+  // только общим числом.
+  let requiredBySink: SinkRequirements | undefined;
+  if (expectedSinkValues !== undefined || expectedSinkPolymers !== undefined) {
+    const bySink = getRequiredBySink({ expectedSinkValues, expectedSinkPolymers });
+    requiredBySink = bySink;
+    const totalExpected = Object.values(bySink).reduce((sum, n) => sum + n, 0);
     if (totalExpected > 0) {
       requiredDeliveries = totalExpected;
     }
@@ -420,6 +426,7 @@ export function createWorldFromLevel(
     nextEventId: 1,
     deliveredCount: 0,
     requiredDeliveries,
+    requiredBySink,
     infiniteMode: Boolean(level.infiniteMode),
     sinkDeliveries: {},
     visitedHexes,

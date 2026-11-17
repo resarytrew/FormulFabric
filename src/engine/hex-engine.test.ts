@@ -744,10 +744,14 @@ test('hidden verificationRuns catch hardcoded solution that passes only visible 
     { type: 'conveyor' as const, coord: { q: 1, r: 0 }, config: { dir: 0 as const } },
   ];
   const report = verifyLevelSolution(antiCheatLevel, hardcodedAdd2, 60);
-  assert.equal(report.passed, 1);
-  assert.equal(report.total, 2);
+  assert.equal(report.passed, 2);
+  assert.equal(report.total, 3);
+  assert.equal(report.results[0].name, 'Основной поток');
   assert.equal(report.results[0].passed, true);
-  assert.equal(report.results[1].passed, false);
+  assert.equal(report.results[1].name, 'Видимый [2]');
+  assert.equal(report.results[1].passed, true);
+  assert.equal(report.results[2].name, 'Скрытый [5]');
+  assert.equal(report.results[2].passed, false);
 
   const wrongPrimary: LevelDefinition = {
     ...antiCheatLevel,
@@ -759,8 +763,10 @@ test('hidden verificationRuns catch hardcoded solution that passes only visible 
   const primaryReport = verifyLevelSolution(wrongPrimary, hardcodedAdd2, 60);
   assert.equal(primaryReport.passed, 1);
   assert.equal(primaryReport.total, 2);
-  assert.equal(primaryReport.results[1].name, 'Основной поток');
-  assert.equal(primaryReport.results[1].passed, false);
+  assert.equal(primaryReport.results[0].name, 'Основной поток');
+  assert.equal(primaryReport.results[0].passed, false);
+  assert.equal(primaryReport.results[1].name, 'Видимый [2]');
+  assert.equal(primaryReport.results[1].passed, true);
 });
 
 test('solution verification rejects forbidden and over-budget placements', () => {
@@ -781,7 +787,7 @@ test('solution verification rejects forbidden and over-budget placements', () =>
   const invalidDirection = [{ ...allowed[0], config: { dir: 6 as unknown as 0 } }];
   const invalidWorld = createWorldFromLevel(level, invalidDirection);
   assert.equal(invalidWorld.status, 'error');
-  assert.match(invalidWorld.errorReason ?? '', /направление/);
+  assert.match(invalidWorld.errorReason ?? '', /направление/i);
   const duplicates = [allowed[0], { ...allowed[0] }];
   const outside = [{ ...allowed[0], coord: { q: 100, r: 100 } }];
   const zeroQuota = { ...level, partLimits: { [allowed[0].type]: 0 } };
