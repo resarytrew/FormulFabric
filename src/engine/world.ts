@@ -10,7 +10,9 @@ import {
   validateLevelFootprintIssues,
   type PlacementIssue,
 } from './placement-validation';
-import type { AxialCoord, HexKey, LevelDefinition, MachineConfig, MachineInstance, MachineType, SimulationWorld } from './types';
+import { validateMachineConfig } from './machine-config';
+import { getRequiredBySink } from './verification';
+import type { AxialCoord, HexKey, LevelDefinition, MachineConfig, MachineInstance, MachineType, SimulationWorld, SinkRequirements } from './types';
 
 export { getMachineFootprint, getMachineOccupiedHexes } from './placement-validation';
 export type { PlacedMachine } from './placement-validation';
@@ -166,12 +168,14 @@ export function validateLevelPlacementIssues(
         }
       }
     }
-    if (!Number.isInteger(b.config.dir) || b.config.dir < 0 || b.config.dir > 5 ||
-      (b.config.altDir !== undefined && (!Number.isInteger(b.config.altDir) || b.config.altDir < 0 || b.config.altDir > 5))) {
+    // Параметры механизма отклоняются до запуска, а не исправляются молча.
+    // Для приёмников образцы проверяются выше (lintPattern), здесь —
+    // направления, делители, фильтры, ротаторы и последовательности.
+    for (const message of validateMachineConfig(b.type, b.config, level)) {
       issues.push(
         issue(
-          'invalid-direction',
-          `Некорректное направление механизма на (${b.coord.q}, ${b.coord.r})`,
+          'invalid-config',
+          `${b.type} на (${b.coord.q}, ${b.coord.r}): ${message}`,
           [b.coord],
           index,
         ),
@@ -395,15 +399,34 @@ export function createWorldFromLevel(
   }
 
   let requiredDeliveries = level.requiredDeliveries;
-  if (expectedSinkValues) {
-    const totalExpected = Object.values(expectedSinkValues).reduce((sum, arr) => sum + arr.length, 0);
+  // Требования по приёмникам задаются явно в обоих случаях:
+  // 1) для дополнительного потока — из объединения переданных ожиданий
+  //    (значения и полимеры одной доставки не суммируются);
+  // 2) для основного потока — из целевых образцов приёмников, где
+  //    встроенная последовательность однозначно определяет число доставок.
+  // Уровневый requiredDeliveries при этом всегда сохраняется: явные квоты
+  // только добавляют ограничения, но не ослабляют общее число доставок.
+  let requiredBySink: SinkRequirements | undefined;
+  if (expectedSinkValues !== undefined || expectedSinkPolymers !== undefined) {
+    const bySink = getRequiredBySink({ expectedSinkValues, expectedSinkPolymers });
+    requiredBySink = bySink;
+    const totalExpected = Object.values(bySink).reduce((sum, n) => sum + n, 0);
     if (totalExpected > 0) {
       requiredDeliveries = totalExpected;
     }
-  } else if (expectedSinkPolymers) {
-    const totalExpected = Object.values(expectedSinkPolymers).reduce((sum, arr) => sum + arr.length, 0);
-    if (totalExpected > 0) {
-      requiredDeliveries = totalExpected;
+  } else {
+    const derived: SinkRequirements = {};
+    for (const machine of machines.values()) {
+      if (machine.type !== 'sink') continue;
+      const pattern = machine.config.targetPattern;
+      if (!pattern) continue;
+      const len = pattern.expectedValues?.length ?? pattern.expectedNodeValues?.length;
+      if (len === undefined) continue;
+      const id = machine.config.sinkId ?? machine.id;
+      derived[id] = (derived[id] ?? 0) + len;
+    }
+    if (Object.keys(derived).length > 0) {
+      requiredBySink = derived;
     }
   }
 
@@ -420,6 +443,7 @@ export function createWorldFromLevel(
     nextEventId: 1,
     deliveredCount: 0,
     requiredDeliveries,
+    requiredBySink,
     infiniteMode: Boolean(level.infiniteMode),
     sinkDeliveries: {},
     visitedHexes,

@@ -155,6 +155,11 @@ export interface SimEvent {
 
 export type SimStatus = 'idle' | 'running' | 'paused' | 'victory' | 'error';
 
+/** Per-sink delivery requirements: how many deliveries each sink must receive. */
+export interface SinkRequirements {
+  [sinkId: string]: number;
+}
+
 export interface SimulationWorld {
   tick: number;
   status: SimStatus;
@@ -171,6 +176,12 @@ export interface SimulationWorld {
   deliveredCount: number;
   requiredDeliveries: number;
   infiniteMode?: boolean;
+  /**
+   * Per-sink delivery requirements for verification streams (union of the
+   * expected values and the expected polymers per sink). Absent for the
+   * primary stream, whose goal is the plain `requiredDeliveries` total.
+   */
+  requiredBySink?: SinkRequirements;
   /** Per-sink delivery history for multi-sink and sequence verification */
   sinkDeliveries: Record<string, number[][]>;
   /** All hexes occupied by player blocks or traversed by tokens (for Area metric) */

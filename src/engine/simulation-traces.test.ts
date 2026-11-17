@@ -16,7 +16,9 @@ test('demo solutions reproduce the original world on every tick', () => {
     const expected = traces[level.id];
     for (let tick = 0; tick < expected.length; tick++) {
       const actual = JSON.parse(JSON.stringify(world, (_key, value) =>
-        value instanceof Map ? [...value.entries()] : value instanceof Set ? [...value] : value,
+        // requiredBySink — производное поле сборки мира (проверяется в verification.test.ts);
+        // эталонные трассы фиксируют поведение симуляции, а не метаданные ожиданий.
+        _key === 'requiredBySink' ? undefined : value instanceof Map ? [...value.entries()] : value instanceof Set ? [...value] : value,
       ));
       assert.deepEqual(actual, expected[tick], `${level.id}, tick ${tick}`);
       if (tick < expected.length - 1) stepSimulation(world);
@@ -39,7 +41,9 @@ test('verification streams reproduce original intermediate states', () => {
       assert.ok(trace, `missing verification trace ${key}`);
       for (let tick = 0; tick < trace.length; tick++) {
         const actual = JSON.parse(JSON.stringify(world, (_key, value) =>
-          value instanceof Map ? [...value.entries()] : value instanceof Set ? [...value] : value,
+          // requiredBySink — производное поле сборки мира (проверяется в verification.test.ts);
+          // эталонные трассы фиксируют поведение симуляции, а не метаданные ожиданий.
+          _key === 'requiredBySink' ? undefined : value instanceof Map ? [...value.entries()] : value instanceof Set ? [...value] : value,
         ));
         assert.deepEqual(actual, trace[tick], `${key}, tick ${tick}`);
         if (tick < trace.length - 1) stepSimulation(world);

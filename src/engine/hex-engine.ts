@@ -9,6 +9,7 @@ export { getConnectedComponents, type ConnectedComponent } from './components';
 export { getRotationSweptHexes } from './rotation';
 export { matchComponentToPattern } from './patterns';
 import { validateLevelPlacement, createWorldFromLevel } from './world';
+import { lintVerificationExpectations } from './verification';
 export { SOLID_MACHINE_TYPES, createMachineInstance, getMachineFootprint, getMachineOccupiedHexes, getBlockedPlacementInfo, validateLevelPlacement, validateLevelPlacementIssues, createEditableWorldFromLevel, createWorldFromLevel } from './world';
 export {
   checkFootprintOverlapIssues,
@@ -38,7 +39,11 @@ export {
   type StoredBlock,
   type UnplaceableBlock,
 } from './layout-conflicts';
-export { MIN_INT_VALUE, MAX_INT_VALUE, evaluateFilterRule, isInRange, getExactDiv2, getExactSqrt, euclideanDivMod } from './operations';
+export { MIN_INT_VALUE, MAX_INT_VALUE, evaluateFilterRule, isInRange, getExactDiv2, getExactSqrt, euclideanDivMod, tryEuclideanDivMod } from './operations';
+export type { DivModResult } from './operations';
+export { hasCompletedGoals } from './victory';
+export { getRequiredBySink, lintVerificationExpectations } from './verification';
+export type { VerificationExpectations } from './verification';
 import { hexKey } from './hex-math';
 import type {
   AxialCoord,
@@ -181,10 +186,36 @@ export function verifyLevelSolution(
 
   const results: VerificationRunResult[] = [];
   if (level.verificationRuns && level.verificationRuns.length > 0) {
-    // A caller may invoke verification directly, without first completing the
-    // visible stream in the UI. Always check that stream as well.
-    const primary = runUntilComplete(createWorldFromLevel(level, playerMachines), maxTicks);
+    // Основной поток всегда попадает в отчёт отдельной строкой, даже если он
+    // проходит: иначе успешный основной поток теряется за дополнительными
+    // испытаниями. Все строки отчёта проверяют согласованность ожиданий ДО
+    // запуска (существование и уникальность sinkId, совместимость
+    // скалярных и полимерных ожиданий), чтобы неработоспособные данные давали
+    // понятную причину, а не падение внутри конструктора мира.
+    const pushLintFailure = (name: string, issues: string[]) => {
+      results.push({ name, passed: false, ticks: 0, reason: issues.join('; ') });
+    };
+    const runPrimary = () => {
+      const primaryIssues = lintVerificationExpectations({}, level, playerMachines);
+      if (primaryIssues.length > 0) {
+        pushLintFailure('Основной поток', primaryIssues);
+        return;
+      }
+      const primary = runUntilComplete(createWorldFromLevel(level, playerMachines), maxTicks);
+      results.push({
+        name: 'Основной поток',
+        passed: primary.check.passed,
+        ticks: primary.world.tick,
+        reason: primary.check.reason,
+      });
+    };
+    runPrimary();
     for (const vr of level.verificationRuns) {
+      const expectationErrors = lintVerificationExpectations(vr, level, playerMachines);
+      if (expectationErrors.length > 0) {
+        pushLintFailure(vr.name, expectationErrors);
+        continue;
+      }
       const vw = createWorldFromLevel(
         level,
         playerMachines,
@@ -200,18 +231,25 @@ export function verifyLevelSolution(
         reason: check.reason,
       });
     }
-    if (!primary.check.passed) {
-      results.push({ name: 'Основной поток', passed: false, ticks: primary.world.tick, reason: primary.check.reason });
-    }
   } else {
-    const w = createWorldFromLevel(level, playerMachines);
-    const { world, check } = runUntilComplete(w, maxTicks);
-    results.push({
-      name: 'Основной поток',
-      passed: check.passed,
-      ticks: world.tick,
-      reason: check.reason,
-    });
+    const expectationErrors = lintVerificationExpectations({}, level, playerMachines);
+    if (expectationErrors.length > 0) {
+      results.push({
+        name: 'Основной поток',
+        passed: false,
+        ticks: 0,
+        reason: expectationErrors.join('; '),
+      });
+    } else {
+      const w = createWorldFromLevel(level, playerMachines);
+      const { world, check } = runUntilComplete(w, maxTicks);
+      results.push({
+        name: 'Основной поток',
+        passed: check.passed,
+        ticks: world.tick,
+        reason: check.reason,
+      });
+    }
   }
 
   const passed = results.filter((r) => r.passed).length;

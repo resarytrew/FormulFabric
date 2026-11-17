@@ -47,6 +47,9 @@ export function getExactSqrt(value: number): { ok: true; result: number } | { ok
 
 /**
  * Euclidean integer division: a = b * q + r, 0 <= r < b (for b > 0).
+ *
+ * Mathematical core, kept exception-friendly: callers that accept user or level
+ * data must go through `tryEuclideanDivMod` instead of catching.
  */
 export function euclideanDivMod(a: number, b: number): { q: number; r: number } {
   if (b <= 0) {
@@ -55,5 +58,42 @@ export function euclideanDivMod(a: number, b: number): { q: number; r: number } 
   const q = Math.floor(a / b);
   const r = a - b * q;
   return { q: q === 0 ? 0 : q, r: r === 0 ? 0 : r };
+}
+
+export type DivModResult =
+  | { ok: true; q: number; r: number }
+  | { ok: false; reason: string };
+
+/**
+ * Safe wrapper around the Euclidean division kernel. Returns a tagged result
+ * instead of throwing so user/level data never crashes the simulation.
+ *
+ * Invariant (for ok results): a = b*q + r and 0 <= r < b.
+ */
+export function tryEuclideanDivMod(
+  a: number,
+  b: number,
+): DivModResult {
+  if (
+    !Number.isInteger(a) ||
+    !Number.isInteger(b) ||
+    Math.abs(a) > MAX_INT_VALUE ||
+    b < 1 ||
+    b > MAX_INT_VALUE
+  ) {
+    return {
+      ok: false,
+      reason: 'Недопустимые аргументы деления',
+    };
+  }
+
+  const q = Math.floor(a / b);
+  const r = a - b * q;
+
+  return {
+    ok: true,
+    q: q === 0 ? 0 : q,
+    r: r === 0 ? 0 : r,
+  };
 }
 
