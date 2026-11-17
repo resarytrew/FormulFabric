@@ -1,3 +1,4 @@
+import { createSceneInput } from './sceneInput';
 import { useSceneCamera } from './useSceneCamera';
 import { useSceneEvents } from './useSceneEvents';
 import { disposeObjectTree } from './disposeObjectTree';
@@ -140,21 +141,6 @@ interface OpPopup {
   life: number;
   maxLife: number;
   startY: number;
-}
-
-interface DragPendingState {
-  fromCoord: AxialCoord;
-  machine: MachineInstance;
-  downX: number;
-  downY: number;
-  timerId: number | null;
-}
-
-interface DragActiveState {
-  fromCoord: AxialCoord;
-  machine: MachineInstance;
-  currentDir: HexDir;
-  targetCoord: AxialCoord | null;
 }
 
 function detectSoftwareGl(): boolean {
@@ -1638,208 +1624,7 @@ export function HexScene3D({
     }
 
     // Raycaster & Drag-and-Drop Pointer State
-    const raycaster = new THREE.Raycaster();
-    const pointerNdc = new THREE.Vector2();
-    let hoveredCoord: AxialCoord | null = null;
-    let pointerDownPos = { x: 0, y: 0 };
-    let dragPending: DragPendingState | null = null;
-    let dragActive: DragActiveState | null = null;
-
-    function updatePointerRay(e: PointerEvent): AxialCoord | null {
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointerNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      pointerNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-      raycaster.setFromCamera(pointerNdc, camera);
-      const hits = raycaster.intersectObjects(interactableHexes, false);
-      if (hits.length > 0) {
-        return hits[0].object.userData.coord as AxialCoord;
-      }
-      return null;
-    }
-
-    function cancelActiveDrag() {
-      if (dragPending?.timerId !== null && dragPending?.timerId !== undefined) {
-        window.clearTimeout(dragPending.timerId);
-      }
-      dragPending = null;
-      if (dragActive) {
-        const origMesh = machineMeshes.get(hexKey(dragActive.fromCoord));
-        if (origMesh) origMesh.visible = true;
-      }
-      dragActive = null;
-      controls.enabled = true;
-      renderer.domElement.style.cursor = '';
-    }
-
-    function onPointerMove(e: PointerEvent) {
-      if (propsRef.current.isTitleMode) return;
-      const coord = updatePointerRay(e);
-      hoveredCoord = coord;
-      propsRef.current.onHexHover?.(coord);
-
-      if (dragPending) {
-        const dist = Math.hypot(e.clientX - dragPending.downX, e.clientY - dragPending.downY);
-        if (dragPending.timerId !== null) {
-          if (dist > 6) {
-            window.clearTimeout(dragPending.timerId);
-            dragPending = null;
-          }
-        } else if (dist > 7) {
-          dragActive = {
-            fromCoord: dragPending.fromCoord,
-            machine: dragPending.machine,
-            currentDir: dragPending.machine.config.dir,
-            targetCoord: coord ?? dragPending.fromCoord,
-          };
-          dragPending = null;
-          controls.enabled = false;
-          renderer.domElement.style.cursor = 'grabbing';
-        }
-      }
-
-      if (dragActive) {
-        dragActive.targetCoord = coord;
-      }
-    }
-
-    function onPointerDown(e: PointerEvent) {
-      pointerDownPos = { x: e.clientX, y: e.clientY };
-      if (propsRef.current.isTitleMode || propsRef.current.isSimPlaying || e.button !== 0) return;
-
-      const coord = updatePointerRay(e);
-      hoveredCoord = coord;
-      if (!coord || !propsRef.current.onMoveBlock) return;
-      const m = propsRef.current.world.machines.get(hexKey(coord));
-      if (!m || m.locked) return;
-
-      const immediate =
-        propsRef.current.selectedTool === 'select' || e.altKey || e.shiftKey;
-      if (immediate) {
-        controls.enabled = false;
-        dragPending = {
-          fromCoord: { ...coord },
-          machine: m,
-          downX: e.clientX,
-          downY: e.clientY,
-          timerId: null,
-        };
-      } else {
-        const capturedCoord = { ...coord };
-        const capturedMachine = m;
-        const timerId = window.setTimeout(() => {
-          if (!dragPending || !hexEqual(dragPending.fromCoord, capturedCoord)) return;
-          dragPending = null;
-          dragActive = {
-            fromCoord: capturedCoord,
-            machine: capturedMachine,
-            currentDir: capturedMachine.config.dir,
-            targetCoord: hoveredCoord ?? capturedCoord,
-          };
-          controls.enabled = false;
-          renderer.domElement.style.cursor = 'grabbing';
-        }, 180);
-        dragPending = {
-          fromCoord: capturedCoord,
-          machine: capturedMachine,
-          downX: e.clientX,
-          downY: e.clientY,
-          timerId,
-        };
-      }
-    }
-
-    function onPointerUp(e: PointerEvent) {
-      if (dragPending?.timerId !== null && dragPending?.timerId !== undefined) {
-        window.clearTimeout(dragPending.timerId);
-      }
-
-      if (dragActive) {
-        const active = dragActive;
-        const dropCoord = updatePointerRay(e) ?? active.targetCoord;
-        cancelActiveDrag();
-
-        if (!propsRef.current.isTitleMode && !propsRef.current.isSimPlaying && dropCoord) {
-          const wSnap = propsRef.current.world;
-          const dKey = hexKey(dropCoord);
-          const destMachine = wSnap.machines.get(dKey);
-          const isBlockedDrop =
-            !wSnap.platformHexes.has(dKey) ||
-            wSnap.narrowGapHexes.has(dKey) ||
-            wSnap.sinkFootprintHexes.has(dKey) ||
-            Boolean(destMachine?.locked);
-          const validDrop =
-            !isBlockedDrop &&
-            (!hexEqual(dropCoord, active.fromCoord) ||
-              active.currentDir !== active.machine.config.dir);
-          if (validDrop || (isBlockedDrop && !hexEqual(dropCoord, active.fromCoord))) {
-            propsRef.current.onMoveBlock?.(active.fromCoord, dropCoord, active.currentDir);
-          }
-        }
-        return;
-      }
-
-      if (dragPending) {
-        dragPending = null;
-        controls.enabled = true;
-      }
-
-      if (propsRef.current.isTitleMode) return;
-      const movedDist = Math.hypot(
-        e.clientX - pointerDownPos.x,
-        e.clientY - pointerDownPos.y,
-      );
-      if (movedDist > 7) return; // Was an orbit/pan drag, not a click
-      const coord = updatePointerRay(e);
-      if (!coord) return;
-      if (e.button === 2) {
-        propsRef.current.onHexRightClick?.(coord);
-      } else if (e.button === 0) {
-        propsRef.current.onHexClick(coord);
-      }
-    }
-
-    function onContextMenu(e: MouseEvent) {
-      e.preventDefault();
-      if (dragActive) {
-        cancelActiveDrag();
-      }
-    }
-
-    // WASD / Arrow camera panning & drag-time R/Escape handling
-    const keysDown = new Set<string>();
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (dragActive && e.code === 'KeyR') {
-        e.preventDefault();
-        e.stopPropagation();
-        dragActive.currentDir = ((dragActive.currentDir + 1) % 6) as HexDir;
-        ghostKey = '';
-        return;
-      }
-      if (dragActive && e.code === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        cancelActiveDrag();
-        return;
-      }
-      keysDown.add(e.code);
-    }
-    function onKeyUp(e: KeyboardEvent) {
-      keysDown.delete(e.code);
-    }
-    function onWindowBlur() {
-      keysDown.clear();
-      cancelActiveDrag();
-    }
-
-    renderer.domElement.addEventListener('pointermove', onPointerMove);
-    renderer.domElement.addEventListener('pointerdown', onPointerDown);
-    renderer.domElement.addEventListener('pointerup', onPointerUp);
-    renderer.domElement.addEventListener('pointercancel', cancelActiveDrag);
-    renderer.domElement.addEventListener('contextmenu', onContextMenu);
-    window.addEventListener('keydown', onKeyDown, true);
-    window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('blur', onWindowBlur);
+    const input = createSceneInput(renderer, camera, controls, propsRef, machineMeshes, () => interactableHexes, () => { ghostKey = ''; });
 
     // ResizeObserver for clean responsive sizing
     const resizeObs = new ResizeObserver((entries) => {
@@ -2336,7 +2121,7 @@ export function HexScene3D({
       // Animate all 3D industrial mechanism sub-parts smoothly with accumulated phase velocity
       for (const [k, mGroup] of machineMeshes.entries()) {
         // Hide original machine while it is lifted & dragged across the board
-        const isBeingDragged = Boolean(dragActive && hexKey(dragActive.fromCoord) === k);
+        const isBeingDragged = Boolean(input.dragActive && hexKey(input.dragActive.fromCoord) === k);
         mGroup.visible = !isBeingDragged;
         if (isBeingDragged) continue;
 
@@ -2642,6 +2427,7 @@ export function HexScene3D({
     }
 
     function tick() {
+      const { dragActive, dragPending, hoveredCoord, keysDown } = input;
       if (disposed) return;
       const nowMs = performance.now();
       const rawDt = (nowMs - lastTimeMs) / 1000;
@@ -3166,18 +2952,10 @@ export function HexScene3D({
       disposed = true;
       cancelAnimationFrame(frameId);
       clearTimeout(frameId);
-      cancelActiveDrag();
+      input.dispose();
       resizeObs.disconnect();
       controls.dispose();
-      renderer.domElement.removeEventListener('pointermove', onPointerMove);
-      renderer.domElement.removeEventListener('pointerdown', onPointerDown);
-      renderer.domElement.removeEventListener('pointerup', onPointerUp);
-      renderer.domElement.removeEventListener('pointercancel', cancelActiveDrag);
-      renderer.domElement.removeEventListener('contextmenu', onContextMenu);
       renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
-      window.removeEventListener('keydown', onKeyDown, true);
-      window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('blur', onWindowBlur);
 
       clearFallingTokens();
       tokenVisuals.clear();
