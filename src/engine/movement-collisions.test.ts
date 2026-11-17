@@ -1,13 +1,14 @@
 /**
  * Столкновения: встречный обмен, цепочки, несколько толкателей/магнитов/источников,
- * одновременные входы, а также эквивалентность поиска встречного обмена (пункт 3.1
- * плана оптимизации): линейный индекс обязан принимать те же решения, что и
- * текущий O(n²)-перебор.
+ * одновременные входы, а также эквивалентность индексного поиска встречного обмена
+ * (пункт 3.1 плана, PR #4C): индекс обязан принимать те же решения, что и
+ * прежний O(n²)-перебор, включая выбор конфликтующей пары и порядок подсветки.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createWorldFromLevel, getConnectedComponents, stepSimulation } from './hex-engine';
-import { resolveMovement } from './collisions';
+import { buildTokenStartIndex, findHeadOnSwapConflict, resolveMovement } from './collisions';
+import { sortedTokens } from './deterministic-order';
 import { generateHexDisk, hexDistance as hexDistanceBetween, hexKey, hexNeighbor, rotateAroundPivot } from './hex-math';
 import {
   addToken,
@@ -288,62 +289,154 @@ test('sources: two spawners feeding one belt queue their values instead of overw
 });
 
 // ---------------------------------------------------------------------------
-// Пункт 3.1: линейный индекс встречного обмена обязан давать те же решения
+// PR #4C: индекс встречного обмена обязан принимать те же решения, что и
+// прежний O(n²)-перебор (пункт 3.1 плана)
 // ---------------------------------------------------------------------------
+//
+// Эталон ниже — независимая копия ПРЕЖНЕГО алгоритма: двойной цикл по всем
+// парам сфер в каноническом порядке. Оптимизированная функция движка
+// сравнивается с ней, а не сама с собой. Проверяются:
+//
+//  - факт столкновения;
+//  - выбранная конфликтующая пара и порядок координат в подсветке;
+//  - текст ошибки и `errorHighlightHexes` в полной фазе разрешения;
+//  - исключение `swapper` (легальный обмен и обмен трамплинами);
+//  - совпадение при обратном порядке хранения в `Map`.
 
-/**
- * Независимая эталонная реализация проверки встречного обмена из пункта 3.1:
- * индекс «гекс на старте → сфера» и один проход по сферам вместо двойного цикла.
- * Возвращает true, если обмен должен считаться столкновением.
- */
-function linearSwapCollision(
-  world: SimulationWorld,
-  tokenToComponent: Map<string, ConnectedComponent>,
-  resolvedIntentByComp: Map<string, ComponentIntent | null>,
-  proposed: Map<string, AxialCoord>,
-): boolean {
-  const tokenAtStart = new Map<string, string>();
-  for (const tok of world.tokens.values()) tokenAtStart.set(hexKey(tok.coord), tok.id);
-
-  for (const tok of world.tokens.values()) {
-    const next = proposed.get(tok.id)!;
-    if (next.q === tok.coord.q && next.r === tok.coord.r) continue;
-    const otherId = tokenAtStart.get(hexKey(next));
-    if (!otherId || otherId === tok.id) continue;
-    const other = world.tokens.get(otherId)!;
-    const otherNext = proposed.get(otherId)!;
-    const otherMoves = !(otherNext.q === other.coord.q && otherNext.r === other.coord.r);
-    const isEdgeSwap = otherMoves && otherNext.q === tok.coord.q && otherNext.r === tok.coord.r;
-    if (!isEdgeSwap) continue;
-
-    const intentA = resolvedIntentByComp.get(tokenToComponent.get(tok.id)!.id);
-    const intentB = resolvedIntentByComp.get(tokenToComponent.get(otherId)!.id);
-    const validSwapperPair =
-      intentA?.kind === 'swap' &&
-      intentB?.kind === 'swap' &&
-      intentA.pivot.q === intentB.pivot.q &&
-      intentA.pivot.r === intentB.pivot.r;
-    if (!validSwapperPair) return true;
-  }
-  return false;
+/** Намерение сферы в сценарии: шаг, прыжок через гекс или обмен сваппера. */
+interface SwapIntentSpec {
+  kind: 'move' | 'jump' | 'swap';
+  dir?: number;
+  pivot?: AxialCoord;
 }
 
-function runSwapCheck(
+interface SwapScenario {
+  world: SimulationWorld;
+  components: ConnectedComponent[];
+  tokenToComponent: Map<string, ConnectedComponent>;
+  intentsByComp: Map<string, ComponentIntent[]>;
+  resolvedIntentByComp: Map<string, ComponentIntent | null>;
+  proposed: Map<string, AxialCoord>;
+}
+
+interface SwapPair {
+  first: AxialCoord;
+  second: AxialCoord;
+}
+
+const sameCoord = (a: AxialCoord, b: AxialCoord): boolean => a.q === b.q && a.r === b.r;
+
+/** Направление шага от `from` к соседнему гексу `to` (или `null`, если не сосед). */
+function dirTowards(from: AxialCoord, to: AxialCoord): number | null {
+  for (let dir = 0; dir < 6; dir++) {
+    if (hexKey(hexNeighbor(from, dir as 0 | 1 | 2 | 3 | 4 | 5)) === hexKey(to)) return dir;
+  }
+  return null;
+}
+
+/** Канонический порядок сфер — независимая копия правила PR #4B. */
+function canonicalTokenIds(world: SimulationWorld): string[] {
+  return [...world.tokens.values()]
+    .sort((a, b) => {
+      const byOrder = (a.spawnOrder ?? Number.MAX_SAFE_INTEGER) - (b.spawnOrder ?? Number.MAX_SAFE_INTEGER);
+      if (byOrder !== 0) return byOrder;
+      if (a.coord.q !== b.coord.q) return a.coord.q - b.coord.q;
+      if (a.coord.r !== b.coord.r) return a.coord.r - b.coord.r;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    })
+    .map((tok) => tok.id);
+}
+
+/**
+ * Эталон (поведение до PR #4C): полный двойной перебор пар.
+ * Возвращает все встречные обмены в порядке, в котором их нашёл бы старый код,
+ * кроме пар, разрешённых общим сваппером.
+ */
+function referenceSwapPairs(
+  scenario: SwapScenario,
+  options: { ignoreSwapperException?: boolean } = {},
+): Array<{ firstId: string; secondId: string }> {
+  const tokenIds = canonicalTokenIds(scenario.world);
+  const pairs: Array<{ firstId: string; secondId: string }> = [];
+  for (let i = 0; i < tokenIds.length; i++) {
+    for (let j = i + 1; j < tokenIds.length; j++) {
+      const id1 = tokenIds[i];
+      const id2 = tokenIds[j];
+      const old1 = scenario.world.tokens.get(id1)!.coord;
+      const old2 = scenario.world.tokens.get(id2)!.coord;
+      const new1 = scenario.proposed.get(id1)!;
+      const new2 = scenario.proposed.get(id2)!;
+      if (
+        !sameCoord(old1, new1) &&
+        !sameCoord(old2, new2) &&
+        sameCoord(new1, old2) &&
+        sameCoord(new2, old1)
+      ) {
+        if (options.ignoreSwapperException) {
+          pairs.push({ firstId: id1, secondId: id2 });
+          continue;
+        }
+        const intent1 = scenario.resolvedIntentByComp.get(scenario.tokenToComponent.get(id1)!.id);
+        const intent2 = scenario.resolvedIntentByComp.get(scenario.tokenToComponent.get(id2)!.id);
+        const validSwapperPair =
+          intent1?.kind === 'swap' &&
+          intent2?.kind === 'swap' &&
+          sameCoord(intent1.pivot, intent2.pivot);
+        if (!validSwapperPair) pairs.push({ firstId: id1, secondId: id2 });
+      }
+    }
+  }
+  return pairs;
+}
+
+/** Эталонный вердикт: первая пара и её координаты в порядке старой подсветки. */
+function referenceSwapConflict(scenario: SwapScenario): SwapPair | null {
+  const first = referenceSwapPairs(scenario)[0];
+  if (!first) return null;
+  return {
+    first: { ...scenario.world.tokens.get(first.firstId)!.coord },
+    second: { ...scenario.world.tokens.get(first.secondId)!.coord },
+  };
+}
+
+/** Что вернула оптимизированная функция движка, в том же формате. */
+function engineSwapConflict(scenario: SwapScenario): SwapPair | null {
+  const ordered = sortedTokens(scenario.world);
+  const index = buildTokenStartIndex(ordered);
+  const conflict = findHeadOnSwapConflict(
+    scenario.world,
+    index,
+    ordered,
+    scenario.tokenToComponent,
+    scenario.resolvedIntentByComp,
+    scenario.proposed,
+  );
+  if (!conflict) return null;
+  return { first: { ...conflict.firstCoord }, second: { ...conflict.secondCoord } };
+}
+
+/**
+ * Сценарий с явными намерениями: намерения задаются на компонент (по его первой
+ * сфере), предложенные координаты считаются по правилам move/swap.
+ */
+function buildSwapScenario(
   world: SimulationWorld,
-  dirs: Map<string, { kind: 'move'; dir: number } | { kind: 'swap'; pivot: AxialCoord }>,
-): { collided: boolean; predicted: boolean; reason: string | null } {
+  dirs: Map<string, SwapIntentSpec>,
+  reverseOrder = false,
+): SwapScenario {
+  if (reverseOrder) reverseStorageOrder(world);
   const components = getConnectedComponents(world);
   const tokenToComponent = new Map<string, ConnectedComponent>();
   const intentsByComp = new Map<string, ComponentIntent[]>();
+  const resolvedIntentByComp = new Map<string, ComponentIntent | null>();
+  const proposed = new Map<string, AxialCoord>();
+
   for (const comp of components) {
     for (const id of comp.tokenIds) tokenToComponent.set(id, comp);
     const spec = dirs.get(comp.tokenIds[0]);
-    if (!spec) {
-      intentsByComp.set(comp.id, []);
-      continue;
-    }
-    intentsByComp.set(comp.id, [
-      spec.kind === 'move'
+    const intent: ComponentIntent | null = !spec
+      ? null
+      : spec.kind === 'move'
         ? {
             kind: 'move',
             dir: spec.dir as never,
@@ -352,110 +445,342 @@ function runSwapCheck(
             sourceCoord: { q: 0, r: 0 },
             sourceMachineType: 'conveyor',
           }
+        : spec.kind === 'jump'
+        ? {
+            kind: 'jump',
+            dir: spec.dir as never,
+            tier: 2,
+            signature: `jump:${spec.dir}`,
+            sourceCoord: { q: 0, r: 0 },
+            sourceMachineType: 'jumper',
+          }
         : {
             kind: 'swap',
-            pivot: { ...spec.pivot },
+            pivot: { ...spec.pivot! },
             tier: 2,
-            signature: `swap:${spec.pivot.q},${spec.pivot.r}`,
-            sourceCoord: { ...spec.pivot },
+            signature: `swap:${spec.pivot!.q},${spec.pivot!.r}`,
+            sourceCoord: { ...spec.pivot! },
             sourceMachineType: 'swapper',
-          },
-    ]);
-  }
-
-  // Предлагаемые координаты повторяют правила намерений (move/swap).
-  const proposed = new Map<string, AxialCoord>();
-  const resolvedIntentByComp = new Map<string, ComponentIntent | null>();
-  for (const comp of components) {
-    const intents = intentsByComp.get(comp.id)!;
-    const intent = intents[0] ?? null;
+          };
+    intentsByComp.set(comp.id, intent ? [intent] : []);
     resolvedIntentByComp.set(comp.id, intent);
+
     for (const id of comp.tokenIds) {
       const tok = world.tokens.get(id)!;
       if (!intent) proposed.set(id, { ...tok.coord });
       else if (intent.kind === 'move') proposed.set(id, hexNeighbor(tok.coord, intent.dir));
+      else if (intent.kind === 'jump') proposed.set(id, hexNeighbor(hexNeighbor(tok.coord, intent.dir), intent.dir));
       else if (intent.kind === 'swap') proposed.set(id, rotateAroundPivot(tok.coord, intent.pivot, 3));
       else proposed.set(id, { ...tok.coord });
     }
   }
 
-  const predicted = linearSwapCollision(world, tokenToComponent, resolvedIntentByComp, proposed);
-  const result = resolveMovement(world, components, tokenToComponent, intentsByComp);
-  const collided = result === null && (world.errorReason ?? '').startsWith('Встречное столкновение');
-  return { collided, predicted, reason: world.errorReason };
+  return { world, components, tokenToComponent, intentsByComp, resolvedIntentByComp, proposed };
 }
 
-test('swap index: linear index and the O(n²) scan agree on 1500 seeded configurations with the swapper exception', () => {
+interface SwapCase {
+  level: ReturnType<typeof auditLevel>;
+  tokens: Array<{ id: string; value: number; q: number; r: number; order: number }>;
+  dirs: Map<string, SwapIntentSpec>;
+}
+
+/** Воспроизводимая конфигурация: до 7 сфер на диске радиуса 3 и их намерения. */
+function makeSwapCase(trial: number, rnd: () => number): SwapCase {
+  const level = auditLevel({ id: `swap-index-${trial}`, radius: 3 });
+  const probe = createWorldFromLevel(level);
+  const hexes = generateHexDisk(3);
+  const chosen: AxialCoord[] = [];
+  const tokenCount = 2 + Math.floor(rnd() * 6);
+
+  // В трети конфигураций первая пара сфер — гарантированная пара сваппера
+  // (pivot ± dir): так исключение `swapper` попадает в выборку вместе с
+  // обычными обменами, в том числе в одном такте с ними.
+  const swapperPairByCoord = new Map<string, AxialCoord>();
+  if (rnd() < 0.35) {
+    for (let attempt = 0; attempt < 8 && swapperPairByCoord.size === 0; attempt++) {
+      const pivot = hexes[Math.floor(rnd() * hexes.length)];
+      const dir = Math.floor(rnd() * 6) as 0 | 1 | 2 | 3 | 4 | 5;
+      const from = hexNeighbor(pivot, dir);
+      const to = hexNeighbor(pivot, ((dir + 3) % 6) as 0 | 1 | 2 | 3 | 4 | 5);
+      if (!probe.platformHexes.has(hexKey(from)) || !probe.platformHexes.has(hexKey(to))) continue;
+      chosen.push(from, to);
+      swapperPairByCoord.set(hexKey(from), pivot);
+      swapperPairByCoord.set(hexKey(to), pivot);
+    }
+  }
+
+  for (let i = 0; i < tokenCount; i++) {
+    const hex = hexes[Math.floor(rnd() * hexes.length)];
+    if (chosen.some((c) => hexKey(c) === hexKey(hex))) continue;
+    chosen.push(hex);
+  }
+  chosen.forEach((hex, index) => {
+    addToken(probe, `t${index + 1}`, index + 1, hex.q, hex.r, index + 1);
+  });
+
+  const dirs = new Map<string, SwapIntentSpec>();
+  const tokenList = [...probe.tokens.values()];
+  for (const tok of tokenList) {
+    const swapperPivot = swapperPairByCoord.get(hexKey(tok.coord));
+    if (swapperPivot) {
+      dirs.set(tok.id, { kind: 'swap', pivot: { ...swapperPivot } });
+      continue;
+    }
+    const roll = rnd();
+    // Часть случаев — намерение swapper, чтобы исключение тоже попало в выборку.
+    if (roll < 0.25) {
+      const pivot = hexNeighbor(tok.coord, Math.floor(rnd() * 6) as 0 | 1 | 2 | 3 | 4 | 5);
+      const dest = rotateAroundPivot(tok.coord, pivot, 3);
+      if (!probe.platformHexes.has(hexKey(pivot)) || !probe.platformHexes.has(hexKey(dest))) continue;
+      dirs.set(tok.id, { kind: 'swap', pivot });
+      continue;
+    }
+
+    // Треть случаев намеренно направлена на соседнюю сферу: это повышает долю
+    // встречных обменов и тактов с несколькими обменами, не делая выборку
+    // искусственной (платформа и ограничения намерений те же).
+    let dir: number | null = null;
+    if (roll < 0.6) {
+      const other = tokenList[Math.floor(rnd() * tokenList.length)];
+      if (other.id !== tok.id) dir = dirTowards(tok.coord, other.coord);
+    }
+    if (dir === null) dir = Math.floor(rnd() * 6);
+    // Намерения ограничены платформой, чтобы проверка обмена действительно
+    // выполнялась (иначе такт отклоняется раньше — край или корпус).
+    if (!probe.platformHexes.has(hexKey(hexNeighbor(tok.coord, dir as 0 | 1 | 2 | 3 | 4 | 5)))) continue;
+    dirs.set(tok.id, { kind: 'move', dir });
+  }
+
+  // Гарантированные встречные обмены: в половине конфигураций 1–2 пары
+  // соседних сфер направляются друг на друга. Это повышает плотность проверки
+  // обмена и даёт такты с несколькими независимыми обменами сразу.
+  const exchangeTargets = rnd() < 0.6 ? 2 : 0;
+  const usedInExchange = new Set<string>();
+  for (let pair = 0; pair < exchangeTargets; pair++) {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const first = tokenList[Math.floor(rnd() * tokenList.length)];
+      const second = tokenList[Math.floor(rnd() * tokenList.length)];
+      if (!first || !second || first.id === second.id) continue;
+      if (usedInExchange.has(first.id) || usedInExchange.has(second.id)) continue;
+      const firstToSecond = dirTowards(first.coord, second.coord);
+      const secondToFirst = dirTowards(second.coord, first.coord);
+      if (firstToSecond === null || secondToFirst === null) continue;
+      if (!probe.platformHexes.has(hexKey(hexNeighbor(first.coord, firstToSecond as 0 | 1 | 2 | 3 | 4 | 5)))) continue;
+      dirs.set(first.id, { kind: 'move', dir: firstToSecond });
+      dirs.set(second.id, { kind: 'move', dir: secondToFirst });
+      usedInExchange.add(first.id);
+      usedInExchange.add(second.id);
+      break;
+    }
+  }
+
+  return {
+    level,
+    tokens: [...probe.tokens.values()].map((tok) => ({
+      id: tok.id,
+      value: tok.value,
+      q: tok.coord.q,
+      r: tok.coord.r,
+      order: tok.spawnOrder,
+    })),
+    dirs,
+  };
+}
+
+function instantiateSwapCase(spec: SwapCase, reverseOrder: boolean): SwapScenario {
+  const world = createWorldFromLevel(spec.level);
+  for (const tok of spec.tokens) addToken(world, tok.id, tok.value, tok.q, tok.r, tok.order);
+  return buildSwapScenario(world, spec.dirs, reverseOrder);
+}
+
+test('swap index (PR #4C): the index search picks the same conflicting pair as the old O(n²) scan on 1500 seeded configurations', () => {
   const rnd = mulberry32(20260101);
   let collisions = 0;
   let allowed = 0;
-  let compared = 0;
+  let multiSwap = 0;
+  let swapperExcused = 0;
 
   for (let trial = 0; trial < 1500; trial++) {
-    const world = createWorldFromLevel(auditLevel({ id: `swap-index-${trial}`, radius: 3 }));
-    const hexes = generateHexDisk(3);
-    const chosen: AxialCoord[] = [];
-    const tokenCount = 2 + Math.floor(rnd() * 6);
-    for (let i = 0; i < tokenCount; i++) {
-      const hex = hexes[Math.floor(rnd() * hexes.length)];
-      if (chosen.some((c) => hexKey(c) === hexKey(hex))) continue;
-      chosen.push(hex);
-      addToken(world, `t${chosen.length}`, chosen.length, hex.q, hex.r, chosen.length);
-    }
+    const spec = makeSwapCase(trial, rnd);
+    const forward = instantiateSwapCase(spec, false);
+    const backward = instantiateSwapCase(spec, true);
 
-    const dirs = new Map<string, { kind: 'move'; dir: number } | { kind: 'swap'; pivot: AxialCoord }>();
-    for (const tok of world.tokens.values()) {
-      // Намерения ограничены платформой, чтобы проверка обмена действительно
-      // выполнялась (иначе такт отклоняется раньше — край или корпус).
-      // Четверть случаев — намерение swapper, чтобы исключение тоже попало в выборку.
-      if (rnd() < 0.25) {
-        const pivot = hexNeighbor(tok.coord, Math.floor(rnd() * 6) as 0 | 1 | 2 | 3 | 4 | 5);
-        const dest = rotateAroundPivot(tok.coord, pivot, 3);
-        if (!world.platformHexes.has(hexKey(pivot)) || !world.platformHexes.has(hexKey(dest))) continue;
-        dirs.set(tok.id, { kind: 'swap', pivot });
-      } else {
-        const dir = Math.floor(rnd() * 6);
-        if (!world.platformHexes.has(hexKey(hexNeighbor(tok.coord, dir as 0 | 1 | 2 | 3 | 4 | 5)))) continue;
-        dirs.set(tok.id, { kind: 'move', dir });
-      }
-    }
+    const refForward = referenceSwapConflict(forward);
+    const refBackward = referenceSwapConflict(backward);
+    assert.deepEqual(refBackward, refForward, `trial ${trial}: эталон обязан быть независим от порядка Map`);
 
-    const { collided, predicted, reason } = runSwapCheck(world, dirs);
-    const earlyError = reason !== null && !reason.startsWith('Встречное столкновение');
-    if (earlyError) {
-      // Проверка обмена не выполнялась: такт отклонён раньше (край платформы,
-      // корпус механизма, перекрытие целей). Такие случаи вне сравнения.
-      continue;
-    }
-    assert.equal(
-      collided,
-      predicted,
-      `trial ${trial}: перебор и линейный индекс разошлись (engine=${collided}, index=${predicted}, reason=${reason})`,
+    const newForward = engineSwapConflict(forward);
+    const newBackward = engineSwapConflict(backward);
+    assert.deepEqual(
+      newForward,
+      refForward,
+      `trial ${trial}: индекс и перебор выбрали разные пары (index=${JSON.stringify(newForward)}, ref=${JSON.stringify(refForward)})`,
     );
-    compared += 1;
-    if (collided) collisions += 1;
+    assert.deepEqual(newBackward, refForward, `trial ${trial}: обратный порядок Map изменил решение`);
+
+    if (refForward) collisions += 1;
     else allowed += 1;
+    if (referenceSwapPairs(forward).length > 1) multiSwap += 1;
+    // Исключение swapper действительно встречается в выборке: обмен есть, но
+    // он разрешён общим пивотом двух свапперов.
+    if (referenceSwapPairs(forward, { ignoreSwapperException: true }).length >
+        referenceSwapPairs(forward).length) {
+      swapperExcused += 1;
+    }
   }
 
-  assert.ok(compared > 400, `слишком мало сравнимых случаев: ${compared}`);
-  assert.ok(collisions > 10, `выборка должна содержать встречные столкновения (${collisions})`);
+  assert.equal(collisions + allowed, 1500);
+  assert.ok(collisions > 100, `выборка должна содержать встречные столкновения (${collisions})`);
   assert.ok(allowed > 10, `выборка должна содержать легальные обмены (${allowed})`);
+  assert.ok(multiSwap > 5, `выборка должна содержать такты с несколькими обменами одновременно (${multiSwap})`);
+  assert.ok(swapperExcused > 5, `выборка должна содержать обмены, разрешённые сваппером (${swapperExcused})`);
+  console.log(
+    `\n=== PR #4C: индекс обмена — 1500 конфигураций × 2 порядка Map: ` +
+      `${collisions} обменов, ${allowed} без обмена, ${multiSwap} с несколькими обменами одновременно, ` +
+      `${swapperExcused} обменов, разрешённых сваппером ===\n`,
+  );
 });
 
-test('swap index: both sides of one swapper stay legal', () => {
+test('swap index (PR #4C): the collision phase reports the same pair, message and highlight as the reference on 1500 configurations', () => {
+  const rnd = mulberry32(20260202);
+  let swapTicks = 0;
+  let earlierChecks = 0;
+
+  for (let trial = 0; trial < 1500; trial++) {
+    const spec = makeSwapCase(trial, rnd);
+    for (const reverseOrder of [false, true]) {
+      const scenario = instantiateSwapCase(spec, reverseOrder);
+      const reference = referenceSwapConflict(scenario);
+      const result = resolveMovement(
+        scenario.world,
+        scenario.components,
+        scenario.tokenToComponent,
+        scenario.intentsByComp,
+      );
+      const reason = scenario.world.errorReason ?? '';
+      const reportedSwap = result === null && reason === 'Встречное столкновение сфер при обмене соседними гексами';
+
+      if (reference) {
+        // Встречный обмен обязан отклонить такт — либо этой проверкой, либо
+        // более ранним классом (край, корпус, разлом, наложение).
+        assert.equal(result, null, `trial ${trial}: обмен обнаружен эталоном, но такт принят (reverse=${reverseOrder})`);
+      }
+
+      assert.equal(
+        reportedSwap,
+        reference !== null && reason === 'Встречное столкновение сфер при обмене соседними гексами',
+        `trial ${trial}: класс ошибки не совпал с эталоном (reason=${reason}, reverse=${reverseOrder})`,
+      );
+      if (reportedSwap) {
+        assert.deepEqual(
+          scenario.world.errorHighlightHexes,
+          [reference!.first, reference!.second],
+          `trial ${trial}: подсветка пары не совпала с эталоном (reverse=${reverseOrder})`,
+        );
+        swapTicks += 1;
+      } else if (reference) {
+        // Обмен найден, но такт отклонён более ранним классом проверок.
+        earlierChecks += 1;
+      } else {
+        // Обмена нет: движок не должен сообщать «Встречное столкновение».
+        assert.notEqual(reason, 'Встречное столкновение сфер при обмене соседними гексами');
+      }
+    }
+  }
+
+  assert.ok(swapTicks > 10, `выборка должна содержать такты, отклонённые проверкой обмена (${swapTicks})`);
+  console.log(`\n=== PR #4C: обмены — ${swapTicks} тактов отклонено проверкой обмена, ${earlierChecks} — более ранним классом ===\n`);
+});
+
+test('swap index (PR #4C): several simultaneous exchanges report the pair that is first in canonical order, not the first in Map order', () => {
+  // Две независимые пары обмена в одном такте: (a,b) на (-2,0)/(-1,0) и (c,d) на
+  // (2,0)/(3,0). Меньший spawnOrder — у пары справа, поэтому канонический порядок
+  // выбирает именно её, хотя по координате она дальше. Старый двойной цикл и
+  // индексный поиск обязаны выбрать одну и ту же пару при любом порядке Map.
+  const level = levelWithPresets('C-two-swaps', [
+    preset('conveyor', -2, 0, { dir: 0 }),
+    preset('conveyor', -1, 0, { dir: 3 }),
+    preset('conveyor', 2, 0, { dir: 0 }),
+    preset('conveyor', 3, 0, { dir: 3 }),
+  ], { radius: 4 });
+
+  // `reverseSpawn=false`: меньший spawnOrder у правой пары (d, c), поэтому
+  // первой обязана идти она — несмотря на бо́льшую координату `q`.
+  // `reverseSpawn=true`: порядок происхождения перевёрнут, первой идёт левая пара.
+  const build = (reverseStorage: boolean, reverseSpawn: boolean): SimulationWorld => {
+    const world = createWorldFromLevel(level);
+    const rows: Array<[string, number, number, number, number]> = reverseSpawn
+      ? [['a', 1, -2, 0, 1], ['b', 2, -1, 0, 2], ['c', 3, 2, 0, 3], ['d', 4, 3, 0, 4]]
+      : [['a', 1, -2, 0, 4], ['b', 2, -1, 0, 3], ['c', 3, 2, 0, 2], ['d', 4, 3, 0, 1]];
+    for (const [id, value, q, r, order] of rows) addToken(world, id, value, q, r, order);
+    return reverseStorage ? reverseStorageOrder(world) : world;
+  };
+
+  for (const reverseStorage of [false, true]) {
+    for (const reverseSpawn of [false, true]) {
+      const world = build(reverseStorage, reverseSpawn);
+      const dirs = new Map<string, SwapIntentSpec>();
+      for (const tok of world.tokens.values()) {
+        dirs.set(tok.id, { kind: 'move', dir: tok.id === 'a' || tok.id === 'c' ? 0 : 3 });
+      }
+      const scenario = buildSwapScenario(world, dirs);
+
+      // Эталон перебирает пары в каноническом порядке и берёт первую.
+      const reference = referenceSwapConflict(scenario);
+      assert.ok(reference, 'эталон обязан найти обмен');
+      assert.deepEqual(engineSwapConflict(scenario), reference);
+
+      // Первой в подсветке идёт сфера, которая раньше в каноническом порядке:
+      // при `reverseSpawn=false` это `d` на (3,0), при `true` — `a` на (-2,0).
+      const expectedFirst = reverseSpawn ? { q: -2, r: 0 } : { q: 3, r: 0 };
+      const expectedSecond = reverseSpawn ? { q: -1, r: 0 } : { q: 2, r: 0 };
+      assert.deepEqual(reference.first, expectedFirst, 'выбор пары обязан опираться на spawnOrder, а не на координату');
+      assert.deepEqual(reference.second, expectedSecond);
+
+      const result = resolveMovement(scenario.world, scenario.components, scenario.tokenToComponent, scenario.intentsByComp);
+      assert.equal(result, null);
+      assert.equal(
+        scenario.world.errorReason,
+        'Встречное столкновение сфер при обмене соседними гексами',
+        `reverseStorage=${reverseStorage}, reverseSpawn=${reverseSpawn}: проверка обмена обязана срабатывать раньше наложения`,
+      );
+      assert.deepEqual(scenario.world.errorHighlightHexes, [expectedFirst, expectedSecond], 'подсветка обязана совпасть с эталоном');
+    }
+  }
+});
+
+test('swap index (PR #4C): both sides of one swapper stay legal in the reference and in the engine', () => {
   const swapperWorld = createWorldFromLevel(levelWithPresets('C-swap-exception', [
     preset('swapper', 0, 0, { dir: 0 }),
   ], { radius: 3 }));
   addToken(swapperWorld, 'left', 1, -1, 0, 1);
   addToken(swapperWorld, 'right', 2, 1, 0, 2);
-  const swapOk = runSwapCheck(swapperWorld, new Map([
+  const dirs = new Map<string, SwapIntentSpec>([
     ['left', { kind: 'swap', pivot: { q: 0, r: 0 } }],
     ['right', { kind: 'swap', pivot: { q: 0, r: 0 } }],
-  ]));
-  assertMatchesRule({ collided: false }, { collided: swapOk.collided });
+  ]);
+
+  for (const reverseOrder of [false, true]) {
+    const scenario = buildSwapScenario(swapperWorldClone(reverseOrder), dirs, false);
+    assert.equal(referenceSwapConflict(scenario), null, 'исключение swapper обязано работать в эталоне');
+    assert.equal(engineSwapConflict(scenario), null, 'исключение swapper обязано работать в индексе');
+
+    const result = resolveMovement(scenario.world, scenario.components, scenario.tokenToComponent, scenario.intentsByComp);
+    assert.notEqual(result, null, 'разрешённый обмен сваппера не должен отклонять такт');
+    assert.equal(scenario.world.errorReason, null);
+  }
+
+  function swapperWorldClone(reverseOrder: boolean): SimulationWorld {
+    const world = createWorldFromLevel(levelWithPresets('C-swap-exception-clone', [
+      preset('swapper', 0, 0, { dir: 0 }),
+    ], { radius: 3 }));
+    addToken(world, 'left', 1, -1, 0, 1);
+    addToken(world, 'right', 2, 1, 0, 2);
+    return reverseOrder ? reverseStorageOrder(world) : world;
+  }
 });
 
-test('swap index: the swapper exception covers its own two-hex exchange, while two jumpers exchanging spheres collide', () => {
+test('swap index (PR #4C): the swapper exception covers its own two-hex exchange, while two jumpers exchanging spheres collide', () => {
   // 180°-поворот сваппера переставляет сферы через две клетки (pivot ± dir),
   // поэтому проверка обмена обязана узнавать и такие пары. Исключение сделано
   // только для пары с общим pivot; обмен прыжками через трамплины — столкновение.
@@ -478,6 +803,27 @@ test('swap index: the swapper exception covers its own two-hex exchange, while t
   assert.equal(world.status, 'error');
   assert.equal(world.errorReason, 'Встречное столкновение сфер при обмене соседними гексами');
   assertUnmoved(world, before);
+
+  // Эталон на той же конфигурации: прыжки строят те же предложенные координаты.
+  const scenario = buildSwapScenario(
+    (() => {
+      const probe = createWorldFromLevel(levelWithPresets('C-jumper-exchange-ref', [
+        preset('jumper', -1, 0, { dir: 0 }),
+        preset('jumper', 1, 0, { dir: 3 }),
+      ], { radius: 4 }));
+      addToken(probe, 'left', 1, -1, 0, 1);
+      addToken(probe, 'right', 2, 1, 0, 2);
+      return probe;
+    })(),
+    new Map<string, SwapIntentSpec>([
+      ['left', { kind: 'jump', dir: 0 }],
+      ['right', { kind: 'jump', dir: 3 }],
+    ]),
+  );
+  const reference = referenceSwapConflict(scenario);
+  assert.deepEqual(reference, { first: { q: -1, r: 0 }, second: { q: 1, r: 0 } });
+  assert.deepEqual(engineSwapConflict(scenario), reference);
+  assert.deepEqual(world.errorHighlightHexes, [reference!.first, reference!.second]);
 });
 
 // ---------------------------------------------------------------------------
