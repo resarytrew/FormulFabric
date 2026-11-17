@@ -1,6 +1,7 @@
+import { useProgressState } from './hooks/useProgressState';
 import { useSimulationClock, BASE_SIM_TICK_MS, type AppState } from './hooks/useSimulationClock';
 import { useEditHistory } from './hooks/useEditHistory';
-import { loadSavedUiStyle, loadSavedProgress, saveProgress, loadSavedVariants, saveVariants, loadSavedHints, saveHints, saveUiStyle, type PlacedBlock, type LevelVariantsMap } from './services/storage';
+import { saveProgress, saveVariants, saveHints, saveUiStyle, type PlacedBlock, type LevelVariantsMap } from './services/storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sound } from './audio/sound';
 import {
@@ -82,16 +83,7 @@ export default function App() {
 
   const [appState, setAppState] = useState<AppState>(autostart ? 'playing' : 'title');
   const [theme, setTheme] = useState<PaletteThemeId>('workshop');
-  const [uiStyle, setUiStyle] = useState<UiStyleMode>(() => loadSavedUiStyle());
-  const [progress, setProgress] = useState<Record<string, LevelProgressRecord>>(() =>
-    loadSavedProgress(),
-  );
-  const [variantsMap, setVariantsMap] = useState<LevelVariantsMap>(() =>
-    loadSavedVariants(),
-  );
-  const [hintsRevealedByLevel, setHintsRevealedByLevel] = useState<Record<string, number>>(
-    () => loadSavedHints(),
-  );
+  const { uiStyle, setUiStyle, progress, setProgress, variantsMap, setVariantsMap, hintsRevealedByLevel, setHintsRevealedByLevel } = useProgressState();
   const [activeVariant, setActiveVariant] = useState<VariantSlotId>('A');
   const [currentLevelId, setCurrentLevelId] = useState<string>('lvl-01');
   const [playerBlocks, setPlayerBlocks] = useState<PlacedBlock[]>([]);
