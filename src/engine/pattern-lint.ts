@@ -1,4 +1,4 @@
-import { hexKey } from './hex-math';
+import { hexDistance, hexKey } from './hex-math';
 import { MIN_INT_VALUE, MAX_INT_VALUE } from './operations';
 import type {
   AxialCoord,
@@ -18,6 +18,9 @@ import type {
  *
  * - **Индексы.** Every edge references two distinct existing nodes, and no edge
  *   is declared twice.
+ * - **Геометрия.** Every edge joins two *neighbouring* hexes (hex distance 1):
+ *   the welder cannot bond spheres further apart. Connectivity alone is not
+ *   enough — a connected, non-buildable graph is rejected as well.
  * - **Числа.** Node values, expected scalars and expected polymer rows must be
  *   integers inside the engine-wide token range [MIN_INT_VALUE, MAX_INT_VALUE],
  *   because outside it no legal token can exist and the receiver would be
@@ -86,7 +89,7 @@ export function lintPattern(pattern: TargetPattern): string[] {
 
   const edges = Array.isArray(pattern.edges) ? pattern.edges : [];
   const pairs = new Set<HexKey>();
-  const validPairs: Array<[number, number]> = [];
+  const validPairs: Array<{ a: number; b: number; idx: number }> = [];
   edges.forEach((edge, idx) => {
     const fromIdx = edge?.fromIdx;
     const toIdx = edge?.toIdx;
@@ -110,7 +113,21 @@ export function lintPattern(pattern: TargetPattern): string[] {
       errors.push(`связь ${idx + 1} образца дублирует уже объявленную связь`);
     }
     pairs.add(pairKey);
-    validPairs.push([fromIdx, toIdx]);
+    validPairs.push({ a: fromIdx, b: toIdx, idx });
+  });
+
+  // Геометрия связей: сварка соединяет только соседние сферы (расстояние 1).
+  // Связный, но не реализуемый граф — ошибка образца. Равенство 0 (совпавшие
+  // вершины) уже сообщено выше как повтор координат.
+  validPairs.forEach(({ a, b, idx }) => {
+    const nodeA = pattern.nodes[a];
+    const nodeB = pattern.nodes[b];
+    if (!isValidCoord(nodeA?.offset) || !isValidCoord(nodeB?.offset)) return;
+    const distance = hexDistance(nodeA.offset, nodeB.offset);
+    if (distance === 0) return;
+    if (distance !== 1) {
+      errors.push(`связь ${idx + 1} соединяет вершины на расстоянии ${distance} — сварка соединяет только соседние гексы (расстояние 1)`);
+    }
   });
 
   // Полимер доставляется как одна сваренная компонента: многоузловой образец
@@ -118,7 +135,7 @@ export function lintPattern(pattern: TargetPattern): string[] {
   // образцы связность не требуют (одиночной сфере связь не нужна).
   if (pattern.nodes.length > 1 && Array.isArray(pattern.edges)) {
     const adjacent: number[][] = pattern.nodes.map(() => []);
-    for (const [a, b] of validPairs) {
+    for (const { a, b } of validPairs) {
       adjacent[a].push(b);
       adjacent[b].push(a);
     }
@@ -139,6 +156,18 @@ export function lintPattern(pattern: TargetPattern): string[] {
         .filter((idx) => !reached.has(idx - 1));
       errors.push(`образец приёмника не является связным: вершины ${missing.join(', ')} не соединены с остальными`);
     }
+  }
+
+  // Скалярная последовательность проверяется только для одиночной доставки:
+  // многосферная доставка несёт несколько значений, и expectedValues для неё
+  // не проверяется матчером — это мёртвые данные. Для многозвенного приёмника
+  // допустимы только expectedNodeValues.
+  if (
+    pattern.expectedValues !== undefined &&
+    Array.isArray(pattern.expectedValues) &&
+    pattern.nodes.length > 1
+  ) {
+    errors.push('образец многозвенного приёмника не может проверять скалярную последовательность expectedValues — используйте expectedNodeValues');
   }
 
   if (pattern.expectedValues !== undefined) {
@@ -176,6 +205,22 @@ export function lintPattern(pattern: TargetPattern): string[] {
             errors.push(`ожидаемый полимер ${idx + 1} образца: звено ${nodeIdx + 1} = ${v} вне диапазона [${MIN_INT_VALUE}, ${MAX_INT_VALUE}]`);
           }
         });
+      });
+    }
+  }
+
+  // Согласованность встроенных ожиданий: значения и полимеры одного приёмника
+  // описывают ОДНИ и те же доставки. Длины обязаны совпадать, а для
+  // однозвенного приёмника — ещё и поэлектренно значения.
+  if (Array.isArray(pattern.expectedValues) && Array.isArray(pattern.expectedNodeValues)) {
+    if (pattern.expectedValues.length !== pattern.expectedNodeValues.length) {
+      errors.push(`ожидаемые значения и полимеры описывают разное число доставок (${pattern.expectedValues.length} против ${pattern.expectedNodeValues.length})`);
+    } else if (pattern.nodes.length === 1) {
+      pattern.expectedValues.forEach((v, idx) => {
+        const row = (pattern.expectedNodeValues as number[][])[idx];
+        if (Array.isArray(row) && row.length === 1 && Number.isInteger(v) && Number.isInteger(row[0]) && v !== row[0]) {
+          errors.push(`ожидаемое значение ${idx + 1} = ${v} не совпадает со звеном полимера ${row[0]}`);
+        }
       });
     }
   }

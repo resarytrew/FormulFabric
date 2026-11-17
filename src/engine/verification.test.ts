@@ -240,3 +240,156 @@ test('полная проверка: приёмочное требование �
   const { check } = runUntilComplete(world, 180);
   assert.equal(check.passed, true);
 });
+
+const twoNodeSinkLevel: LevelDefinition = {
+  ...twoSinkLevel,
+  presetMachines: [
+    {
+      type: 'sink',
+      coord: { q: 0, r: 0 },
+      locked: true,
+      config: {
+        dir: 0,
+        sinkId: 'main',
+        targetPattern: {
+          mode: 'exact',
+          nodes: [{ offset: { q: 0, r: 0 } }, { offset: { q: 1, r: 0 } }],
+          edges: [{ fromIdx: 0, toIdx: 1 }],
+          rotationInvariant: true,
+          label: 'pair',
+        },
+      },
+    },
+  ],
+};
+
+test('P0: многосферная доставка не принимает совмещённые ожидания', () => {
+  // Скалярное ожидание для многозвенного приёмника не проверяется вовсе.
+  const scalarOnly = lintVerificationExpectations({ expectedSinkValues: { main: [5] } }, twoNodeSinkLevel);
+  assert.ok(scalarOnly.some((e) => e.includes('не проверяются')), `got: ${scalarOnly.join('; ')}`);
+
+  // Совмещение скаляра и полимера для многосферной доставки запрещено.
+  const both = lintVerificationExpectations(
+    { expectedSinkValues: { main: [5] }, expectedSinkPolymers: { main: [[1, 2]] } },
+    twoNodeSinkLevel,
+  );
+  assert.ok(both.some((e) => e.includes('многосферной доставки')), `got: ${both.join('; ')}`);
+
+  // Однозвенный приёмник: совмещение допустимо только при совпадении значений.
+  const inconsistent = lintVerificationExpectations(
+    { expectedSinkValues: { main: [999] }, expectedSinkPolymers: { main: [[7]] } },
+    twoSinkLevel,
+  );
+  assert.ok(inconsistent.some((e) => e.includes('не совпадает')), `got: ${inconsistent.join('; ')}`);
+
+  const consistent = lintVerificationExpectations(
+    { expectedSinkValues: { main: [7] }, expectedSinkPolymers: { main: [[7]] } },
+    twoSinkLevel,
+  );
+  assert.deepEqual(consistent, []);
+
+  // Только полимеры для многозвенного приёмника — законно.
+  const polymersOnly = lintVerificationExpectations({ expectedSinkPolymers: { main: [[1, 2]] } }, twoNodeSinkLevel);
+  assert.deepEqual(polymersOnly, []);
+});
+
+test('P0: getRequiredBySink тоже отклоняет совмещённые многосферные ожидания', () => {
+  assert.throws(
+    () => getRequiredBySink({ expectedSinkValues: { main: [5] }, expectedSinkPolymers: { main: [[1, 2]] } }),
+    /многосферной доставки/,
+  );
+  assert.throws(
+    () => getRequiredBySink({ expectedSinkValues: { main: [999] }, expectedSinkPolymers: { main: [[7]] } }),
+    /не совпадает/,
+  );
+});
+
+test('P1: приёмник с указанным идентификатором должен существовать', () => {
+  const lint = lintVerificationExpectations({ expectedSinkValues: { nonexistent: [5] } }, twoSinkLevel);
+  assert.ok(lint.some((e) => e.includes('отсутствует на уровне')), `got: ${lint.join('; ')}`);
+
+  // Но приёмник, поставленный игроком, законен.
+  const blocks = [
+    { type: 'sink' as const, coord: { q: 0, r: 0 }, config: { dir: 0 as const, sinkId: 'placed' } },
+  ];
+  const withPlaced = lintVerificationExpectations({ expectedSinkValues: { placed: [5] } }, twoSinkLevel, blocks);
+  assert.ok(!withPlaced.some((e) => e.includes('отсутствует')), `got: ${withPlaced.join('; ')}`);
+});
+
+test('P1: дублирующиеся sinkId отклоняются, основной поток помечается сбоем', () => {
+  const dup: LevelDefinition = {
+    ...twoSinkLevel,
+    presetMachines: [
+      twoSinkLevel.presetMachines[0],
+      {
+        ...twoSinkLevel.presetMachines[1],
+        config: { ...twoSinkLevel.presetMachines[1].config, sinkId: 'main' },
+      },
+    ],
+  };
+  const lint = lintVerificationExpectations({}, dup);
+  assert.ok(
+    lint.some((e) => e.includes('идентификатор используется 2 приёмниками')),
+    `got: ${lint.join('; ')}`,
+  );
+
+  const report = verifyLevelSolution(dup, [], 30);
+  assert.equal(report.results[0].name, 'Основной поток');
+  assert.equal(report.results[0].passed, false);
+  assert.match(report.results[0].reason ?? '', /идентификатор используется/);
+});
+
+test('P1: основной поток получает требования по приёмникам из встроенных последовательностей', () => {
+  const lvl = CAMPAIGN_LEVELS.find((l) => l.id === 'lvl-02')!;
+  const world = createWorldFromLevel(lvl, lvl.demoSolution ?? []);
+  assert.deepEqual(world.requiredBySink, { main: 3 });
+  // Общее число доставок по уровню при этом не ослабляется и не усиливается.
+  assert.equal(world.requiredDeliveries, 3);
+  const { check } = runUntilComplete(world, 180);
+  assert.equal(check.passed, true);
+
+  // Уровень без встроенных последовательностей — поведение прежнее.
+  const withoutEmbedded = createWorldFromLevel(twoSinkLevel);
+  assert.equal(withoutEmbedded.requiredBySink, undefined);
+});
+
+test('P1: победа основного потока недостижима без квоты хотя бы одного приёмника', () => {
+  const scripted: LevelDefinition = {
+    ...twoSinkLevel,
+    requiredDeliveries: 3,
+    presetMachines: [
+      {
+        ...twoSinkLevel.presetMachines[0],
+        config: {
+          ...twoSinkLevel.presetMachines[0].config,
+          targetPattern: {
+            ...twoSinkLevel.presetMachines[0].config.targetPattern!,
+            expectedValues: [1, 2],
+          },
+        },
+      },
+      {
+        ...twoSinkLevel.presetMachines[1],
+        config: {
+          ...twoSinkLevel.presetMachines[1].config,
+          targetPattern: {
+            ...twoSinkLevel.presetMachines[1].config.targetPattern!,
+            expectedValues: [3],
+          },
+        },
+      },
+    ],
+  };
+  const world = createWorldFromLevel(scripted);
+  assert.deepEqual(world.requiredBySink, { main: 2, side: 1 });
+  assert.equal(world.requiredDeliveries, 3);
+
+  world.deliveredCount = 3;
+  world.sinkDeliveries = { main: [[1], [2]] };
+  checkVictory(world);
+  assert.notEqual(world.status, 'victory', 'side остался без доставки');
+
+  world.sinkDeliveries = { main: [[1], [2]], side: [[3]] };
+  checkVictory(world);
+  assert.equal(world.status, 'victory');
+});

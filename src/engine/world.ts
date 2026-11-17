@@ -399,10 +399,13 @@ export function createWorldFromLevel(
   }
 
   let requiredDeliveries = level.requiredDeliveries;
-  // Объединяем оба вида ожиданий по каждому приёмнику отдельно: проверка
-  // значения и структуры ОДНОЙ доставки не суммируются. Заданию нужен потолок
-  // по каждому приёмнику, поэтому требования хранятся на уровне мира, а не
-  // только общим числом.
+  // Требования по приёмникам задаются явно в обоих случаях:
+  // 1) для дополнительного потока — из объединения переданных ожиданий
+  //    (значения и полимеры одной доставки не суммируются);
+  // 2) для основного потока — из целевых образцов приёмников, где
+  //    встроенная последовательность однозначно определяет число доставок.
+  // Уровневый requiredDeliveries при этом всегда сохраняется: явные квоты
+  // только добавляют ограничения, но не ослабляют общее число доставок.
   let requiredBySink: SinkRequirements | undefined;
   if (expectedSinkValues !== undefined || expectedSinkPolymers !== undefined) {
     const bySink = getRequiredBySink({ expectedSinkValues, expectedSinkPolymers });
@@ -410,6 +413,20 @@ export function createWorldFromLevel(
     const totalExpected = Object.values(bySink).reduce((sum, n) => sum + n, 0);
     if (totalExpected > 0) {
       requiredDeliveries = totalExpected;
+    }
+  } else {
+    const derived: SinkRequirements = {};
+    for (const machine of machines.values()) {
+      if (machine.type !== 'sink') continue;
+      const pattern = machine.config.targetPattern;
+      if (!pattern) continue;
+      const len = pattern.expectedValues?.length ?? pattern.expectedNodeValues?.length;
+      if (len === undefined) continue;
+      const id = machine.config.sinkId ?? machine.id;
+      derived[id] = (derived[id] ?? 0) + len;
+    }
+    if (Object.keys(derived).length > 0) {
+      requiredBySink = derived;
     }
   }
 

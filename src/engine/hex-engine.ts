@@ -188,25 +188,32 @@ export function verifyLevelSolution(
   if (level.verificationRuns && level.verificationRuns.length > 0) {
     // Основной поток всегда попадает в отчёт отдельной строкой, даже если он
     // проходит: иначе успешный основной поток теряется за дополнительными
-    // испытаниями. Дополнительные потоки проверяются на совместимость
-    // ожиданий ДО запуска, чтобы несовместимые данные давали понятную причину,
-    // а не падение внутри конструктора мира.
-    const primary = runUntilComplete(createWorldFromLevel(level, playerMachines), maxTicks);
-    results.push({
-      name: 'Основной поток',
-      passed: primary.check.passed,
-      ticks: primary.world.tick,
-      reason: primary.check.reason,
-    });
+    // испытаниями. Все строки отчёта проверяют согласованность ожиданий ДО
+    // запуска (существование и уникальность sinkId, совместимость
+    // скалярных и полимерных ожиданий), чтобы неработоспособные данные давали
+    // понятную причину, а не падение внутри конструктора мира.
+    const pushLintFailure = (name: string, issues: string[]) => {
+      results.push({ name, passed: false, ticks: 0, reason: issues.join('; ') });
+    };
+    const runPrimary = () => {
+      const primaryIssues = lintVerificationExpectations({}, level, playerMachines);
+      if (primaryIssues.length > 0) {
+        pushLintFailure('Основной поток', primaryIssues);
+        return;
+      }
+      const primary = runUntilComplete(createWorldFromLevel(level, playerMachines), maxTicks);
+      results.push({
+        name: 'Основной поток',
+        passed: primary.check.passed,
+        ticks: primary.world.tick,
+        reason: primary.check.reason,
+      });
+    };
+    runPrimary();
     for (const vr of level.verificationRuns) {
-      const expectationErrors = lintVerificationExpectations(vr, level);
+      const expectationErrors = lintVerificationExpectations(vr, level, playerMachines);
       if (expectationErrors.length > 0) {
-        results.push({
-          name: vr.name,
-          passed: false,
-          ticks: 0,
-          reason: expectationErrors.join('; '),
-        });
+        pushLintFailure(vr.name, expectationErrors);
         continue;
       }
       const vw = createWorldFromLevel(
@@ -225,14 +232,24 @@ export function verifyLevelSolution(
       });
     }
   } else {
-    const w = createWorldFromLevel(level, playerMachines);
-    const { world, check } = runUntilComplete(w, maxTicks);
-    results.push({
-      name: 'Основной поток',
-      passed: check.passed,
-      ticks: world.tick,
-      reason: check.reason,
-    });
+    const expectationErrors = lintVerificationExpectations({}, level, playerMachines);
+    if (expectationErrors.length > 0) {
+      results.push({
+        name: 'Основной поток',
+        passed: false,
+        ticks: 0,
+        reason: expectationErrors.join('; '),
+      });
+    } else {
+      const w = createWorldFromLevel(level, playerMachines);
+      const { world, check } = runUntilComplete(w, maxTicks);
+      results.push({
+        name: 'Основной поток',
+        passed: check.passed,
+        ticks: world.tick,
+        reason: check.reason,
+      });
+    }
   }
 
   const passed = results.filter((r) => r.passed).length;

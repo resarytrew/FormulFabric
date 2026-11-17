@@ -11,7 +11,7 @@ test('collision and arithmetic errors reproduce original intermediate worlds', (
   for (const [name, world] of Object.entries(scenarios)) {
     const expected = traces[name];
     for (let tick = 0; tick < expected.length; tick++) {
-      const snapshot = JSON.parse(JSON.stringify(world, (_key, value) => value instanceof Map ? [...value.entries()] : value instanceof Set ? [...value] : value));
+      const snapshot = JSON.parse(JSON.stringify(world, (_key, value) => _key === 'requiredBySink' ? undefined : value instanceof Map ? [...value.entries()] : value instanceof Set ? [...value] : value));
       assert.deepEqual(snapshot, expected[tick], `${name}, tick ${tick}`);
       if (tick < expected.length - 1) stepSimulation(world);
     }

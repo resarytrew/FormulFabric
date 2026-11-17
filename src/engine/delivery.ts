@@ -99,7 +99,10 @@ export function finishSimulationTick(world: SimulationWorld, machineActionOccurr
       if (matchRes.matched) {
         const deliveredVals = matchRes.matchedValues ?? compTokens.map((t) => t.value);
 
-        // If sink has expectedValues sequence, verify expected item
+        // If sink has expectedValues sequence, verify expected item.
+        // Скалярные ожидания допустимы только для односферных доставок
+        // (линтер отклоняет expectedValues у многозвенных образцов),
+        // поэтому сравнение значений здесь точно при deliveredVals.length === 1.
         if (pattern.expectedValues && pattern.expectedValues.length > 0) {
           const stepIdx = hist.length;
           if (stepIdx >= pattern.expectedValues.length) {

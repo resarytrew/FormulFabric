@@ -21,18 +21,80 @@ test('многоузловой образец с несвязным графом
     ...base,
     nodes: [
       { offset: { q: 0, r: 0 }, value: 1 },
-      { offset: { q: 3, r: 1 }, value: 2 },
+      { offset: { q: 1, r: 0 }, value: 2 },
+      { offset: { q: 4, r: 2 }, value: 3 },
     ],
-    edges: [],
+    edges: [{ fromIdx: 0, toIdx: 1 }],
   };
   const errors = lintPattern(disconnected);
   assert.ok(errors.some((e) => e.includes('не является связным')), `expected connectivity error, got: ${errors.join('; ')}`);
 
-  // Одно ребро из двух делает граф связным.
+  // Линейная цепочка из соседних вершин реализуема.
   assert.deepEqual(
-    lintPattern({ ...disconnected, edges: [{ fromIdx: 0, toIdx: 1 }] }),
+    lintPattern({
+      ...disconnected,
+      nodes: [
+        { offset: { q: 0, r: 0 }, value: 1 },
+        { offset: { q: 1, r: 0 }, value: 2 },
+        { offset: { q: 2, r: 0 }, value: 3 },
+      ],
+      edges: [
+        { fromIdx: 0, toIdx: 1 },
+        { fromIdx: 1, toIdx: 2 },
+      ],
+    }),
     [],
   );
+});
+
+test('связь между несоседними клетками отклоняется, даже если граф связный', () => {
+  // Геометрически невозможно: сварка соединяет только соседей на расстоянии 1.
+  const teleport: TargetPattern = {
+    ...base,
+    nodes: [
+      { offset: { q: 0, r: 0 } },
+      { offset: { q: 3, r: 1 } },
+    ],
+    edges: [{ fromIdx: 0, toIdx: 1 }],
+  };
+  const errors = lintPattern(teleport);
+  assert.ok(
+    errors.some((e) => e.includes('расстоянии 4')),
+    `expected adjacency error with distance 4, got: ${errors.join('; ')}`,
+  );
+
+  // Восьмёрка из двух рёбер: граф связен, но оба ребра несоседние.
+  const chained: TargetPattern = {
+    ...base,
+    nodes: [
+      { offset: { q: 0, r: 0 } },
+      { offset: { q: 3, r: 1 } },
+      { offset: { q: 1, r: 1 } },
+    ],
+    edges: [
+      { fromIdx: 0, toIdx: 1 },
+      { fromIdx: 1, toIdx: 2 },
+    ],
+  };
+  const chainedErrors = lintPattern(chained);
+  assert.ok(chainedErrors.some((e) => e.includes('расстоянии 4')), `expected distance 4 error, got: ${chainedErrors.join('; ')}`);
+  assert.ok(chainedErrors.some((e) => e.includes('расстоянии 2')), `expected distance 2 error, got: ${chainedErrors.join('; ')}`);
+  assert.ok(!chainedErrors.some((e) => e.includes('не является связным')));
+
+  // Соседняя цепочка реализуема.
+  const adjacent: TargetPattern = {
+    ...base,
+    nodes: [
+      { offset: { q: 0, r: 0 } },
+      { offset: { q: 1, r: 0 } },
+      { offset: { q: 1, r: 1 } },
+    ],
+    edges: [
+      { fromIdx: 0, toIdx: 1 },
+      { fromIdx: 1, toIdx: 2 },
+    ],
+  };
+  assert.deepEqual(lintPattern(adjacent), []);
 });
 
 test('незамкнутые графы законны для цепочечных задач', () => {
@@ -198,4 +260,43 @@ test('все образцы приёмников из глав являются 
       `sink pattern of ${levelId} («${label}») must pass the linter`,
     );
   }
+});
+
+test('многозвенный образец не может проверять скалярную последовательность', () => {
+  const multiScalar: TargetPattern = {
+    ...base,
+    nodes: [
+      { offset: { q: 0, r: 0 } },
+      { offset: { q: 1, r: 0 } },
+    ],
+    edges: [{ fromIdx: 0, toIdx: 1 }],
+    expectedValues: [1, 2],
+  };
+  assert.ok(lintPattern(multiScalar).some((e) => e.includes('expectedValues')));
+
+  // Полимерные ожидания той же длины допустимы.
+  const multiPolymer: TargetPattern = { ...multiScalar, expectedValues: undefined, expectedNodeValues: [[1, 2]] };
+  assert.deepEqual(lintPattern(multiPolymer), []);
+});
+
+test('совмещённые ожидания однозвенного приёмника обязаны согласовываться по значениям', () => {
+  const consistent: TargetPattern = {
+    ...base,
+    nodes: [{ offset: { q: 0, r: 0 } }],
+    expectedValues: [7, 8],
+    expectedNodeValues: [[7], [8]],
+  };
+  assert.deepEqual(lintPattern(consistent), []);
+
+  const mismatched: TargetPattern = {
+    ...consistent,
+    expectedNodeValues: [[7], [9]],
+  };
+  assert.ok(lintPattern(mismatched).some((e) => e.includes('не совпадает со звеном полимера')));
+
+  const mismatchedLengths: TargetPattern = {
+    ...consistent,
+    expectedNodeValues: [[7]],
+  };
+  assert.ok(lintPattern(mismatchedLengths).some((e) => e.includes('разное число доставок')));
 });
