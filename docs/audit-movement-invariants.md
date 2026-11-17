@@ -309,7 +309,8 @@ AUDIT_STRICT=1 npx tsx --test \
 ## 9. PR #4C — оптимизация движения
 
 Дата: 2026-11-17 · База: `main` @ `42a88a1` · Ветка: `arena/6ba54554-formulfabric`
-(имя `perf/movement-indexes` недоступно: среда фиксирует рабочую ветку сессии).
+(имя `perf/movement-indexes` недоступно: среда фиксирует рабочую ветку сессии) · PR:
+[#6](https://github.com/resarytrew/FormulFabric/pull/6).
 
 Это исключительно оптимизационный этап. Ни одна игровая механика не менялась: те же фазы такта в том же
 порядке, те же математические операции, те же приоритеты `tier`/`pushChainIndex`, те же правила доставки
@@ -521,6 +522,7 @@ occupancyIndex().has(spawnKey)                  // O(1); после выпуск
 | `AUDIT_STRICT=1 npm test` | 219 / 222: падают **только** три характеризующих дефекта вращения (задача #4D) — см. 9.10 |
 | `AUDIT_STRICT=1 npx tsx --test src/engine/movement-{collisions,determinism,invariants}.test.ts src/engine/spawning-occupancy.test.ts` | все зелёные |
 | `npx tsx scripts/perf-movement-indexes.ts` | обе реализации сверены перед замером; таблицы 9.6 воспроизводятся |
+| GitHub Actions (PR #6, workflow «CI and GitHub Pages») | **успешно**: `verify` — 21 с, `deploy` пропущен для pull request |
 
 ### 9.10. Что осталось для #4D
 
