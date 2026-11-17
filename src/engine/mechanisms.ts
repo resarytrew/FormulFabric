@@ -1,3 +1,4 @@
+import { activateSpawners } from './spawning';
 import { getConnectedComponents, type ConnectedComponent } from './components';
 import { pushEvent, triggerError } from './events';
 import { hexDistance, hexEqual, hexKey, hexNeighbor, oppositeDir, rotateAroundPivot, rotateDir } from './hex-math';
@@ -14,96 +15,7 @@ function addBondCanonical(world: SimulationWorld, idA: string, idB: string): boo
 }
 
 export function processMechanisms(world: SimulationWorld, movedTokenIds: Set<string>, recordConsumed: (token: Token, kind: ConsumedTokenKind) => void): boolean | null {
-  // Activate Spawners (spawn onto neighbor hex if empty)
-  for (const machine of world.machines.values()) {
-    if (machine.type !== 'spawner') continue;
-    const seq = machine.config.sequence ?? [];
-    if (seq.length === 0) continue;
-
-    if (machine.state.cooldown > 0) {
-      machine.state.cooldown -= 1;
-      continue;
-    }
-
-    if (machine.state.spawnIndex >= seq.length) {
-      if (machine.config.loopSequence) {
-        machine.state.spawnIndex = 0;
-      } else {
-        continue;
-      }
-    }
-
-    const spawnCoord = hexNeighbor(machine.coord, machine.config.dir);
-    const spawnKey = hexKey(spawnCoord);
-    if (!world.platformHexes.has(spawnKey)) {
-      triggerError(
-        world,
-        'Источник направлен за пределы платформы',
-        [machine.coord, spawnCoord],
-        'error',
-      );
-      return null;
-    }
-
-    const spawnDestMachine = world.machines.get(spawnKey);
-    if (spawnDestMachine && SOLID_MACHINE_TYPES.has(spawnDestMachine.type)) {
-      triggerError(
-        world,
-        `Источник направлен внутрь корпуса механизма (${spawnDestMachine.type})`,
-        [machine.coord, spawnCoord],
-        'collision',
-      );
-      return null;
-    }
-
-    // Check if spawn hex currently occupied
-    const occupied = Array.from(world.tokens.values()).some((t) =>
-      hexEqual(t.coord, spawnCoord),
-    );
-    if (occupied) {
-      pushEvent(world, {
-        type: 'blocked',
-        coord: spawnCoord,
-        message: 'Выход источника занят — ожидание освобождения гекса',
-        severity: 'warning',
-      });
-      continue;
-    }
-
-    const val = seq[machine.state.spawnIndex];
-    if (!isInRange(val, world.minValue, world.maxValue)) {
-      triggerError(
-        world,
-        `Входное значение ${val} выходит за допустимый диапазон [${world.minValue}, ${world.maxValue}]`,
-        [machine.coord],
-        'error',
-      );
-      return null;
-    }
-
-    const newTok: Token = {
-      id: `t_${world.nextTokenId++}`,
-      value: val,
-      prevValue: val,
-      coord: { ...spawnCoord },
-      prevCoord: { ...machine.coord },
-      moveSource: 'spawner',
-      spawnOrder: world.nextSpawnOrder++,
-    };
-    world.tokens.set(newTok.id, newTok);
-    movedTokenIds.add(newTok.id);
-    machine.state.spawnIndex += 1;
-    machine.state.cooldown = Math.max(0, (machine.config.spawnInterval ?? 2) - 1);
-    machine.state.activeFlashTicks = 1;
-    machine.state.lastActionTick = world.tick;
-
-    pushEvent(world, {
-      type: 'spawn',
-      coord: spawnCoord,
-      message: `Выпущено число ${val}`,
-      severity: 'info',
-    });
-  }
+  if (!activateSpawners(world, movedTokenIds)) return null;
 
   // Track visited hexes for Area optimization metric
   for (const t of world.tokens.values()) {
