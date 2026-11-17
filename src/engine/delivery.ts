@@ -1,3 +1,4 @@
+import { checkVictory } from './victory';
 import { getConnectedComponents } from './components';
 import { pushEvent, triggerError } from './events';
 import { hexEqual, hexKey, hexNeighbor, oppositeDir } from './hex-math';
@@ -187,15 +188,7 @@ export function finishSimulationTick(world: SimulationWorld, machineActionOccurr
     }
   }
 
-  if (!world.infiniteMode && world.requiredDeliveries > 0 && world.deliveredCount >= world.requiredDeliveries) {
-    world.status = 'victory';
-    pushEvent(world, {
-      type: 'deliver',
-      coord: { q: 0, r: 0 },
-      message: `Цель выполнена за ${world.tick} тактов!`,
-      severity: 'success',
-    });
-  }
+  checkVictory(world);
 
   // Deadlock check for waiting side-port queues: if machines are holding tokens on blocked altDir
   // while zero tokens moved/transformed, no non-waiting component has drive, and no spawner can emit
