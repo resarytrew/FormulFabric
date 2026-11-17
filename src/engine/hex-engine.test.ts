@@ -713,6 +713,14 @@ test('hidden verificationRuns catch hardcoded solution that passes only visible 
   const antiCheatLevel: LevelDefinition = {
     ...eur7,
     availableTools: [...new Set([...eur7.availableTools, 'add1' as const, 'conveyor' as const])],
+    requiredDeliveries: 1,
+    presetMachines: eur7.presetMachines.map(machine => {
+      if (machine.type === 'spawner') return { ...machine, config: { ...machine.config, sequence: [2] } };
+      if (machine.type === 'sink' && machine.config.targetPattern) {
+        return { ...machine, config: { ...machine.config, targetPattern: { ...machine.config.targetPattern, expectedValues: [4] } } };
+      }
+      return machine;
+    }),
     demoSolution: undefined,
     verificationRuns: [
       {
@@ -740,6 +748,19 @@ test('hidden verificationRuns catch hardcoded solution that passes only visible 
   assert.equal(report.total, 2);
   assert.equal(report.results[0].passed, true);
   assert.equal(report.results[1].passed, false);
+
+  const wrongPrimary: LevelDefinition = {
+    ...antiCheatLevel,
+    presetMachines: antiCheatLevel.presetMachines.map(machine => machine.type === 'sink' && machine.config.targetPattern
+      ? { ...machine, config: { ...machine.config, targetPattern: { ...machine.config.targetPattern, expectedValues: [5] } } }
+      : machine),
+    verificationRuns: antiCheatLevel.verificationRuns?.slice(0, 1),
+  };
+  const primaryReport = verifyLevelSolution(wrongPrimary, hardcodedAdd2, 60);
+  assert.equal(primaryReport.passed, 1);
+  assert.equal(primaryReport.total, 2);
+  assert.equal(primaryReport.results[1].name, 'Основной поток');
+  assert.equal(primaryReport.results[1].passed, false);
 });
 
 test('solution verification rejects forbidden and over-budget placements', () => {

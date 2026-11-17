@@ -153,6 +153,9 @@ export function verifyLevelSolution(
 
   const results: VerificationRunResult[] = [];
   if (level.verificationRuns && level.verificationRuns.length > 0) {
+    // A caller may invoke verification directly, without first completing the
+    // visible stream in the UI. Always check that stream as well.
+    const primary = runUntilComplete(createWorldFromLevel(level, playerMachines), maxTicks);
     for (const vr of level.verificationRuns) {
       const vw = createWorldFromLevel(
         level,
@@ -168,6 +171,9 @@ export function verifyLevelSolution(
         ticks: world.tick,
         reason: check.reason,
       });
+    }
+    if (!primary.check.passed) {
+      results.push({ name: 'Основной поток', passed: false, ticks: primary.world.tick, reason: primary.check.reason });
     }
   } else {
     const w = createWorldFromLevel(level, playerMachines);
