@@ -17,7 +17,6 @@ import {
   auditLevel,
   bondTokens,
   documentedViolations,
-  documentDivergence,
   formatViolationTable,
   levelWithPresets,
   mulberry32,
@@ -503,7 +502,7 @@ function world_ids(world: SimulationWorld): string[] {
   return [...world.tokens.values()].map((t) => `${t.id}=${t.value}@${t.coord.q},${t.coord.r}`).sort();
 }
 
-test('[P2] two collisions in one tick: which hex is reported depends on token storage order', () => {
+test('collisions: two independent collisions in one tick report the conflict hex with the smaller coordinate', () => {
   const level = levelWithPresets('D-two-collisions', [
     preset('conveyor', 0, 0, { dir: 0 }),
     preset('conveyor', 1, -1, { dir: 1 }),
@@ -522,7 +521,7 @@ test('[P2] two collisions in one tick: which hex is reported depends on token st
     for (const [id, value, q, r, order] of reverse ? [...tokens].reverse() : tokens) {
       addToken(world, id, value, q, r, order);
     }
-    return world;
+    return reverse ? reverseStorageOrder(world) : world;
   };
 
   const forward = build(false);
@@ -530,35 +529,135 @@ test('[P2] two collisions in one tick: which hex is reported depends on token st
   stepSimulation(forward);
   stepSimulation(reversed);
 
-  assert.equal(forward.status, 'error');
-  assert.equal(reversed.status, 'error');
-  assert.equal(tokensAt(forward), tokensAt(reversed), 'сферы не двигаются в обоих прогонах');
-
-  documentDivergence({
-    id: 'simultaneous-collision-report',
-    severity: 'P2',
-    title: 'При двух одновременных столкновениях сообщение указывает на гекс, который первым попал в Map',
-    expected: 'диагностика не должна зависеть от порядка хранения: одинаковый гекс (или все гексы) при одинаковом мире',
-    actual: 'сообщение указывает (1, 0) при прямом порядке и (4, 0) при обратном',
-    note: 'Такт отвергается в обоих случаях, физика совпадает; расхождение только в тексте и подсветке ошибки.',
-  }, forward.errorReason, reversed.errorReason);
+  // Обе пары накладываются в одном такте: (1,0) и (4,0). Такт отвергается в
+  // любом порядке, а сообщение обязано указывать меньший гекс.
+  assertMatchesRule('error', forward.status);
+  assertMatchesRule('error', reversed.status);
+  assertMatchesRule(tokensAt(forward), tokensAt(reversed), 'сферы не двигаются в обоих прогонах');
+  assertMatchesRule('Столкновение 2 числовых сфер на гексе (1, 0)', forward.errorReason ?? '');
+  assertMatchesRule(forward.errorReason, reversed.errorReason, 'диагностика не зависит от порядка хранения');
+  assertMatchesRule([{ q: 1, r: 0 }], forward.errorHighlightHexes);
+  assertMatchesRule(forward.errorHighlightHexes, reversed.errorHighlightHexes, 'подсветка не зависит от порядка хранения');
 });
+
+test('collisions: only the second conflict present still reports its own hex, so the decision never changes', () => {
+  // Контроль: тот же мир без первой пары. Стабилизация выбора не должна
+  // «переключать» решение — оставшийся конфликт (4,0) обязан быть обнаружен.
+  const level = levelWithPresets('D-one-collision', [
+    preset('conveyor', 3, 0, { dir: 0 }),
+    preset('conveyor', 4, -1, { dir: 1 }),
+  ], { radius: 5 });
+  const build = (reverse: boolean): SimulationWorld => {
+    const world = createWorldFromLevel(level);
+    addToken(world, 'c', 3, 3, 0, 3);
+    addToken(world, 'd', 4, 4, -1, 4);
+    return reverse ? reverseStorageOrder(world) : world;
+  };
+  for (const reverse of [false, true]) {
+    const world = build(reverse);
+    stepSimulation(world);
+    assertMatchesRule('error', world.status);
+    assertMatchesRule('Столкновение 2 числовых сфер на гексе (4, 0)', world.errorReason ?? '');
+  }
+});
+
+test('collisions: the class priority of checks is preserved when several violations share one tick', () => {
+  // Край платформы важнее наложения: (3,0) → (4,0) падает за платформу radius 3,
+  // одновременно две ленты сводят сферы в (1,0).
+  const edgeAndOverlap = levelWithPresets('D-edge-priority', [
+    preset('conveyor', 3, 0, { dir: 0 }),
+    preset('conveyor', 0, 0, { dir: 0 }),
+    preset('conveyor', 1, -1, { dir: 1 }),
+  ], { radius: 3 });
+  const build = (reverse: boolean): SimulationWorld => {
+    const world = createWorldFromLevel(edgeAndOverlap);
+    addToken(world, 'faller', 9, 3, 0, 3);
+    addToken(world, 'a', 1, 0, 0, 1);
+    addToken(world, 'b', 2, 1, -1, 2);
+    return reverse ? reverseStorageOrder(world) : world;
+  };
+  for (const reverse of [false, true]) {
+    const world = build(reverse);
+    stepSimulation(world);
+    assertMatchesRule('error', world.status);
+    assertMatchesRule(
+      'Падение за край платформы в точке (4, 0)',
+      world.errorReason ?? '',
+      `край платформы обязан проверяться раньше наложения (reverse=${reverse})`,
+    );
+  }
+
+  // Встречный обмен важнее наложения: пара (a,b) меняется местами, а (c,d)
+  // одновременно претендуют на один гекс.
+  const swapAndOverlap = levelWithPresets('D-swap-priority', [
+    preset('conveyor', -2, 0, { dir: 0 }),
+    preset('conveyor', -1, 0, { dir: 3 }),
+    preset('conveyor', 0, 1, { dir: 1 }),
+    preset('conveyor', 0, 3, { dir: 4 }),
+  ], { radius: 4 });
+  const buildSwap = (reverse: boolean): SimulationWorld => {
+    const world = createWorldFromLevel(swapAndOverlap);
+    addToken(world, 'p', 1, -2, 0, 1);
+    addToken(world, 'q', 2, -1, 0, 2);
+    addToken(world, 'r', 3, 0, 1, 3);
+    addToken(world, 's', 4, 0, 3, 4);
+    return reverse ? reverseStorageOrder(world) : world;
+  };
+  for (const reverse of [false, true]) {
+    const world = buildSwap(reverse);
+    stepSimulation(world);
+    assertMatchesRule('error', world.status);
+    assertMatchesRule(
+      'Встречное столкновение сфер при обмене соседними гексами',
+      world.errorReason ?? '',
+      `встречный обмен обязан проверяться раньше наложения (reverse=${reverse})`,
+    );
+  }
+});
+
+test('events: flash and transform event order is stable under reversed storage order', () => {
+  // Два независимых преобразования в одном такте: порядок событий и вспышек
+  // задаётся каноническим обходом, а не порядком Map.
+  const level = levelWithPresets('D-event-order', [
+    preset('conveyor', -1, 0, { dir: 0 }),
+    preset('add1', 0, 0, { dir: 0 }),
+    preset('conveyor', -1, 2, { dir: 0 }),
+    preset('mul2', 0, 2, { dir: 0 }),
+  ], { radius: 4 });
+  const build = (reverse: boolean): SimulationWorld => {
+    const world = createWorldFromLevel(level);
+    addToken(world, 'a', 2, -1, 0, 1);
+    addToken(world, 'b', 3, -1, 2, 2);
+    return reverse ? reverseStorageOrder(world) : world;
+  };
+  const forward = build(false);
+  const reversed = build(true);
+  for (let tick = 0; tick < 3; tick++) {
+    stepSimulation(forward);
+    stepSimulation(reversed);
+  }
+  const eventLog = (world: SimulationWorld) =>
+    world.events.map((e) => `${e.id}:${e.tick}:${e.type}:${e.coord.q},${e.coord.r}:${e.message}`);
+  assertMatchesRule(eventLog(forward), eventLog(reversed));
+  const state = (world: SimulationWorld) =>
+    sortedMachinesOf(world).map((m) => `${m.type}@${m.coord.q},${m.coord.r}:flash=${m.state.activeFlashTicks}:last=${m.state.lastActionTick}`);
+  assertMatchesRule(state(forward), state(reversed), 'состояния механизмов стабильны');
+});
+
+function sortedMachinesOf(world: SimulationWorld) {
+  return [...world.machines.values()].sort((a, b) =>
+    a.coord.q - b.coord.q || a.coord.r - b.coord.r,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Сводка аудита
 // ---------------------------------------------------------------------------
 
-test('audit summary: the documented divergence registry matches the report and is printed for review', () => {
+test('audit summary: no documented divergence remains in the determinism suite', () => {
   const rows = documentedViolations();
-  const ids = rows.map((v) => v.id).sort();
-  // node:test запускает каждый файл в своём процессе, поэтому реестр содержит
-  // ровно те расхождения, которые задокументированы в этом файле.
-  const expectedIds = ['simultaneous-collision-report'];
-  assert.deepEqual(ids, expectedIds, `расхождения этого файла: ${ids.join(', ')}`);
-  for (const row of rows) {
-    assert.ok(row.expected.length > 0 && row.actual.length > 0, `${row.id}: ожидаемое и фактическое поведение должны быть описаны`);
-  }
-
-  // Печатается в выводе `npm test` — это и есть таблица результатов аудита.
-  console.log(`\n=== Аудит инвариантов движения: задокументированные расхождения (${rows.length}) ===\n${formatViolationTable()}\n`);
+  // Все расхождения этого файла исправлены в PR #4B; реестр обязан быть пустым,
+  // иначе тест снова начал бы «документировать» дефект вместо проверки правила.
+  assert.deepEqual(rows.map((v) => v.id).sort(), []);
+  console.log(`\n=== Аудит инвариантов движения: расхождения (${rows.length}) ===\n${formatViolationTable()}\n`);
 });

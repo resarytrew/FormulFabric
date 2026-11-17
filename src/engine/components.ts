@@ -1,3 +1,4 @@
+import { sortedTokens } from './deterministic-order';
 import type { SimulationWorld } from './types';
 
 export interface ConnectedComponent {
@@ -6,10 +7,17 @@ export interface ConnectedComponent {
   bondIndices: number[];
 }
 
+/**
+ * Связные компоненты в каноническом порядке сфер (`spawnOrder`, координата,
+ * `id`). Порядок компонентов виден снаружи: он задаёт порядок вспышек
+ * механизмов, порядок доставок и выбор компонента для диагностики, поэтому он
+ * не должен зависеть от порядка вставки в `world.tokens`.
+ */
 export function getConnectedComponents(world: SimulationWorld): ConnectedComponent[] {
+  const orderedTokens = sortedTokens(world);
   const adj = new Map<string, string[]>();
-  for (const id of world.tokens.keys()) {
-    adj.set(id, []);
+  for (const tok of orderedTokens) {
+    adj.set(tok.id, []);
   }
   for (const edge of world.bonds) {
     if (world.tokens.has(edge.a) && world.tokens.has(edge.b)) {
@@ -21,7 +29,7 @@ export function getConnectedComponents(world: SimulationWorld): ConnectedCompone
   const visited = new Set<string>();
   const components: ConnectedComponent[] = [];
 
-  for (const id of world.tokens.keys()) {
+  for (const { id } of orderedTokens) {
     if (visited.has(id)) continue;
     const stack = [id];
     const tokenIds: string[] = [];

@@ -633,8 +633,10 @@ test('intents: pusher and magnet pulling one sphere in the same direction pick t
   assertMatchesRule({ moveSource: 'pusher', pushChainIndex: 0 }, source(forward), 'побеждает источник с меньшей координатой');
 });
 
-test('collision audit summary: documented divergences of this suite', () => {
+test('collision audit summary: no documented divergence remains in the collision suite', () => {
   const ids = documentedViolations().map((v) => v.id).sort();
+  // Все расхождения этого файла исправлены в PR #4B (общий выход источников,
+  // равнозначные намерения, метаданные источника). Реестр обязан быть пустым.
   assert.deepEqual(ids, []);
   console.log(`\n=== Аудит столкновений: расхождения (${ids.length}) ===\n${formatViolationTable()}\n`);
 });
