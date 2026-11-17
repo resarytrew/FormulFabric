@@ -8,6 +8,63 @@ import { SOLID_MACHINE_TYPES } from './world';
 import type { ComponentIntent, ThrustTier } from './movement-types';
 import type { AxialCoord, HexKey, SimulationWorld, Token } from './types';
 
+/**
+ * Препятствие на дуге поворота ротатора (PR #4D).
+ *
+ * Проверка описывает правило B контракта `docs/rotation-geometry-contract.md`:
+ * дуга центра каждой сферы компонента сравнивается с корпусами механизмов и с
+ * конечными позициями чужих сфер. Возвращается **первое** препятствие в
+ * детерминированном порядке дуги, поэтому диагностика не зависит от порядка
+ * `world.tokens` / `world.machines`.
+ */
+export interface RotationArcObstacle {
+  kind: 'housing' | 'sphere';
+  /** Гекс дуги, в котором найдено препятствие (входит в подсветку ошибки). */
+  hex: AxialCoord;
+  /** Сфера компонента, чья дуга встретила препятствие. */
+  moverId: string;
+  /** Тип механизма — только для `kind = 'housing'`. */
+  machineType?: string;
+  /** Сфера, занимающая гекс дуги конечной позицией, — только для `kind = 'sphere'`. */
+  occupantId?: string;
+}
+
+/**
+ * Первое препятствие на дуге поворота компонента или `null`, если дуга свободна.
+ *
+ * Порядок обхода: сферы компонента в его каноническом порядке (`tokenIds`
+ * отсортированы), внутри сферы — гексы дуги в порядке первого входа
+ * (`getRotationSweptHexes`), внутри гекса — сначала корпус, затем чужая сфера.
+ * Сферы своего компонента не проверяются: поворот жёсткий (правило A), взаимное
+ * расположение сфер при нём сохраняется.
+ */
+export function findRotationArcObstacle(
+  world: SimulationWorld,
+  component: ConnectedComponent,
+  intent: Extract<ComponentIntent, { kind: 'rotate' }>,
+  orderedProposed: ReadonlyArray<[string, AxialCoord]>,
+): RotationArcObstacle | null {
+  const compSet = new Set(component.tokenIds);
+  for (const id of component.tokenIds) {
+    const tok = world.tokens.get(id);
+    if (!tok) continue;
+    const sweptHexes = getRotationSweptHexes(tok.coord, intent.pivot, intent.cwSteps);
+    for (const sweptHex of sweptHexes) {
+      const sweptMachine = world.machines.get(hexKey(sweptHex));
+      if (sweptMachine && SOLID_MACHINE_TYPES.has(sweptMachine.type)) {
+        return { kind: 'housing', hex: sweptHex, moverId: id, machineType: sweptMachine.type };
+      }
+      for (const [otherId, otherProposed] of orderedProposed) {
+        if (compSet.has(otherId)) continue;
+        if (hexEqual(otherProposed, sweptHex)) {
+          return { kind: 'sphere', hex: sweptHex, moverId: id, occupantId: otherId };
+        }
+      }
+    }
+  }
+  return null;
+}
+
 /** Найденная пара встречного обмена: сферы меняются стартовыми клетками. */
 export interface HeadOnSwapConflict {
   firstId: string;
@@ -228,40 +285,31 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
     .filter((tok) => proposedCoordByToken.has(tok.id))
     .map((tok) => [tok.id, proposedCoordByToken.get(tok.id)!] as [string, AxialCoord]);
 
-  // Check Rotator Swept-Arc Obstacles (solid machine housings & non-component spheres on swept sector)
+  // Check Rotator Swept-Arc Obstacles (solid machine housings & non-component spheres on swept sector).
+  // Дуга точная (PR #4D): гексы возвращаются в порядке первого входа, поэтому
+  // сообщение и подсветка указывают на первое препятствие по ходу поворота.
   for (const comp of components) {
     const intent = resolvedIntentByComp.get(comp.id);
     if (!intent || intent.kind !== 'rotate') continue;
-    const compSet = new Set(comp.tokenIds);
-    for (const id of comp.tokenIds) {
-      const tok = world.tokens.get(id)!;
-      const sweptHexes = getRotationSweptHexes(tok.coord, intent.pivot, intent.cwSteps);
-      for (const sweptHex of sweptHexes) {
-        const sKey = hexKey(sweptHex);
-        const sweptMachine = world.machines.get(sKey);
-        if (sweptMachine && SOLID_MACHINE_TYPES.has(sweptMachine.type)) {
-          triggerError(
-            world,
-            `Столкновение на дуге поворота ротатора: корпус механизма (${sweptMachine.type}) перекрывает сектор`,
-            [intent.pivot, tok.coord, sweptHex],
-            'collision',
-          );
-          return null;
-        }
-        for (const [otherId, otherProposed] of orderedProposed) {
-          if (compSet.has(otherId)) continue;
-          if (hexEqual(otherProposed, sweptHex)) {
-            triggerError(
-              world,
-              'Столкновение на дуге поворота ротатора: сектор поворота занят другой сферой',
-              [intent.pivot, sweptHex],
-              'collision',
-            );
-            return null;
-          }
-        }
-      }
+    const obstacle = findRotationArcObstacle(world, comp, intent, orderedProposed);
+    if (!obstacle) continue;
+    const moverCoord = world.tokens.get(obstacle.moverId)?.coord ?? intent.pivot;
+    if (obstacle.kind === 'housing') {
+      triggerError(
+        world,
+        `Столкновение на дуге поворота ротатора: корпус механизма (${obstacle.machineType}) перекрывает сектор`,
+        [intent.pivot, moverCoord, obstacle.hex],
+        'collision',
+      );
+      return null;
     }
+    triggerError(
+      world,
+      'Столкновение на дуге поворота ротатора: сектор поворота занят другой сферой',
+      [intent.pivot, obstacle.hex],
+      'collision',
+    );
+    return null;
   }
 
   // Check out-of-bounds and solid housings.
