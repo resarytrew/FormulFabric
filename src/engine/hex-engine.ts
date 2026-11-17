@@ -160,6 +160,9 @@ export function validateLevelPlacement(
 
   for (const b of blocks) {
     const key = hexKey(b.coord);
+    if (!level.availableTools.includes(b.type)) {
+      errors.push(`Механизм ${b.type} недоступен на этом уровне`);
+    }
     if (seen.has(key)) {
       errors.push(`Дублирующая установка механизма на гексе (${b.coord.q}, ${b.coord.r})`);
       continue;
@@ -2380,6 +2383,10 @@ export function verifyLevelSolution(
   playerMachines: Array<{ type: MachineType; coord: AxialCoord; config: MachineConfig }>,
   maxTicks = MAX_SIMULATION_TICKS,
 ): VerificationReport {
+  const placementErrors = validateLevelPlacement(level, playerMachines);
+  if (placementErrors.length > 0) {
+    return { passed: 0, total: 1, results: [{ name: 'Проверка размещения', passed: false, ticks: 0, reason: placementErrors.join('; ') }] };
+  }
   if (level.infiniteMode) {
     return { passed: 0, total: 0, results: [] };
   }

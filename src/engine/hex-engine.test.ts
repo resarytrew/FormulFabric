@@ -712,6 +712,7 @@ test('hidden verificationRuns catch hardcoded solution that passes only visible 
   // If we use divmod(b=27) -> no, let's check with a synthetic level that mirrors visible vs hidden:
   const antiCheatLevel: LevelDefinition = {
     ...eur7,
+    availableTools: [...new Set([...eur7.availableTools, 'add1' as const, 'conveyor' as const])],
     demoSolution: undefined,
     verificationRuns: [
       {
@@ -739,6 +740,17 @@ test('hidden verificationRuns catch hardcoded solution that passes only visible 
   assert.equal(report.total, 2);
   assert.equal(report.results[0].passed, true);
   assert.equal(report.results[1].passed, false);
+});
+
+test('solution verification rejects forbidden and over-budget placements', () => {
+  const level = CAMPAIGN_LEVELS[0];
+  const forbidden = [{ type: 'sqrt' as const, coord: { q: 0, r: 0 }, config: { dir: 0 as const } }];
+  assert.ok(!level.availableTools.includes('sqrt'));
+  assert.equal(verifyLevelSolution(level, forbidden).passed, 0);
+  assert.match(verifyLevelSolution(level, forbidden).results[0].reason ?? '', /недоступен/);
+  const limited = { ...level, maxTotalBlocks: 0 };
+  const allowed = [{ type: level.availableTools[0], coord: { q: 0, r: 0 }, config: { dir: 0 as const } }];
+  assert.match(verifyLevelSolution(limited, allowed).results[0].reason ?? '', /лимит/);
 });
 
 test('live simulation halts infinite feedback loop at MAX_SIMULATION_TICKS with diagnostic message', () => {
