@@ -23,6 +23,7 @@ import { TitleScreen } from './components/TitleScreen';
 import { TopHud } from './components/TopHud';
 import {
   computeWorldArea,
+  createEditableWorldFromLevel,
   createWorldFromLevel,
 } from './engine/hex-engine';
 import { hexEqual, rotateDir } from './engine/hex-math';
@@ -149,7 +150,9 @@ export default function App() {
       setTickHistoryCount(0);
       setVictoryReport(null);
       setFailedVerificationReport(null);
-      const fresh = createWorldFromLevel(lvl, blocks);
+      // Keep the player's layout visible even when it is invalid: the world is
+      // marked as an error world, which blocks the simulation until it is fixed.
+      const fresh = createEditableWorldFromLevel(lvl, blocks);
       worldRef.current = fresh;
       setWorld(fresh);
       setIsSimPlaying(false);
@@ -338,7 +341,11 @@ export default function App() {
 
       if (e.code === 'Space') {
         e.preventDefault();
-        if (worldRef.current.status === 'victory' || worldRef.current.status === 'error') {
+        if (worldRef.current.status === 'error') {
+          showBudgetWarning(
+            worldRef.current.errorReason ?? 'Исправьте конфликты схемы перед запуском симуляции.',
+          );
+        } else if (worldRef.current.status === 'victory') {
           handleResetSim();
         } else {
           setIsSimPlaying((p) => !p);
@@ -522,7 +529,14 @@ export default function App() {
             muted={muted}
             continuousCamera={continuousCamera}
             onTogglePlay={() => {
-              if (world.status === 'victory' || world.status === 'error') {
+              if (world.status === 'error') {
+                // An invalid layout cannot be simulated; explain it instead.
+                showBudgetWarning(
+                  world.errorReason ?? 'Исправьте конфликты схемы перед запуском симуляции.',
+                );
+                return;
+              }
+              if (world.status === 'victory') {
                 handleResetSim();
               } else {
                 setIsSimPlaying((p) => !p);

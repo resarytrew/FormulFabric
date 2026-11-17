@@ -162,7 +162,8 @@ export function createSceneInput(renderer: THREE.WebGLRenderer, camera: THREE.Pe
             !wSnap.platformHexes.has(dKey) ||
             wSnap.narrowGapHexes.has(dKey) ||
             (Boolean(padOwnerId) && !isOwnPad) ||
-            Boolean(destMachine?.locked);
+            // Only unlocked presets can be replaced, and only from their centre.
+            Boolean(destMachine && destMachine.locked && !hexEqual(dropCoord, active.fromCoord));
           const validDrop =
             !isBlockedDrop &&
             (!hexEqual(dropCoord, active.fromCoord) ||

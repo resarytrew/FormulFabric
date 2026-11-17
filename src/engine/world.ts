@@ -29,18 +29,23 @@ export function createMachineInstance(
     config: {
       ...config,
       sequence: config.sequence ? [...config.sequence] : undefined,
+      // Cloned defensively: a corrupted persisted pattern used to throw here.
       targetPattern: config.targetPattern
         ? {
             ...config.targetPattern,
-            nodes: config.targetPattern.nodes.map((n) => ({
-              offset: { ...n.offset },
-              value: n.value,
-            })),
-            edges: config.targetPattern.edges.map((e) => ({ ...e })),
-            expectedValues: config.targetPattern.expectedValues
+            nodes: Array.isArray(config.targetPattern.nodes)
+              ? config.targetPattern.nodes.map((n) => ({
+                  offset: { ...n?.offset },
+                  value: n?.value,
+                }))
+              : [],
+            edges: Array.isArray(config.targetPattern.edges)
+              ? config.targetPattern.edges.map((e) => ({ ...e }))
+              : [],
+            expectedValues: Array.isArray(config.targetPattern.expectedValues)
               ? [...config.targetPattern.expectedValues]
               : undefined,
-            expectedNodeValues: config.targetPattern.expectedNodeValues
+            expectedNodeValues: Array.isArray(config.targetPattern.expectedNodeValues)
               ? config.targetPattern.expectedNodeValues.map((row) => [...row])
               : undefined,
             ladderStep: config.targetPattern.ladderStep
@@ -170,6 +175,50 @@ export function validateLevelPlacement(
   }
 
   return errors;
+}
+
+/**
+ * Builds the world for a layout the player is still editing, without hiding it.
+ * The layout is kept as declared (invalid blocks stay on the board so the
+ * conflict can be seen and repaired) and the world is marked as an error world,
+ * which blocks the simulation until the layout is fixed.
+ */
+export function createEditableWorldFromLevel(
+  level: LevelDefinition,
+  playerMachines: Array<{ type: MachineType; coord: AxialCoord; config: MachineConfig }>,
+): SimulationWorld {
+  const errors = playerMachines.length ? validateLevelPlacement(level, playerMachines) : [];
+  if (errors.length === 0) {
+    return createWorldFromLevel(level, playerMachines);
+  }
+
+  const world = createWorldFromLevel(level, [], undefined, undefined, undefined);
+  const finalPlacement = resolveFinalPlacement(level, playerMachines, undefined, new Set(), {
+    dropConflicts: false,
+  });
+  const machines = new Map<HexKey, MachineInstance>();
+  const sinkFootprintHexes = new Map<HexKey, string>();
+  let machineSeq = 1;
+  for (const machine of finalPlacement) {
+    const inst = createMachineInstance(
+      `m_${machineSeq++}`,
+      machine.type,
+      machine.coord,
+      machine.locked,
+      machine.config,
+    );
+    machines.set(hexKey(machine.coord), inst);
+    addSinkFootprintEntries(sinkFootprintHexes, inst.id, inst);
+  }
+
+  world.machines = machines;
+  world.sinkFootprintHexes = sinkFootprintHexes;
+  world.status = 'error';
+  world.errorReason = errors.join('; ');
+  world.errorHighlightHexes = finalPlacement
+    .filter((machine) => !machine.locked)
+    .map((machine) => ({ ...machine.coord }));
+  return world;
 }
 
 export function createWorldFromLevel(

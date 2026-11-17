@@ -9,7 +9,7 @@ export { getConnectedComponents, type ConnectedComponent } from './components';
 export { getRotationSweptHexes } from './rotation';
 export { matchComponentToPattern } from './patterns';
 import { validateLevelPlacement, createWorldFromLevel } from './world';
-export { SOLID_MACHINE_TYPES, createMachineInstance, getMachineFootprint, getMachineOccupiedHexes, getBlockedPlacementInfo, validateLevelPlacement, createWorldFromLevel } from './world';
+export { SOLID_MACHINE_TYPES, createMachineInstance, getMachineFootprint, getMachineOccupiedHexes, getBlockedPlacementInfo, validateLevelPlacement, createEditableWorldFromLevel, createWorldFromLevel } from './world';
 export {
   checkFootprintOverlaps,
   checkFootprintPlacement,

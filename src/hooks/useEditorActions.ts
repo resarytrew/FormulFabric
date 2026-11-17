@@ -130,14 +130,13 @@ export function useEditorActions({ isSimPlaying, appState, inspectedCoord, selec
       setVariantsMap(nextVariants);
 
       const storedBlocks = lvlVars[slot]?.blocks ?? [];
-      // Load the layout exactly as saved: never drop a block silently.
-      const targetBlocks: PlacedBlock[] = storedBlocks
-        .filter((b): b is PlacedBlock => Boolean(b && b.coord))
-        .map((b) => ({
-          type: b.type,
-          coord: { ...b.coord },
-          config: structuredClone(b.config),
-        }));
+      // Load the layout exactly as saved: never drop a block silently, not even
+      // a corrupted one — it stays on the board and is reported as a conflict.
+      const targetBlocks: PlacedBlock[] = storedBlocks.map((b) => ({
+        type: b?.type,
+        coord: { ...b?.coord },
+        config: structuredClone(b?.config),
+      }));
       const conflicts = findLayoutConflictsForLevel(currentLevelRef.current, targetBlocks);
       setActiveVariant(slot);
       setInspectedCoord(null);

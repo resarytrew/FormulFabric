@@ -34,6 +34,12 @@ export type FinalMachine = {
   coord: AxialCoord;
   config: MachineConfig;
   locked: boolean;
+  /**
+   * For a player block: the index of the unlocked preset whose *centre* it
+   * stands on. This is the only rule that replaces a preset — a block on a
+   * receiver pad is a conflict, never a silent removal.
+   */
+  replacesPresetIndex?: number;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -50,7 +56,9 @@ export function isValidCoord(coord: unknown): coord is AxialCoord {
  * machines without `config`; the world builder and the validators must report
  * that instead of throwing.
  */
-export function getMachineConfig(machine: { config?: MachineConfig } | null | undefined): MachineConfig | undefined {
+export function getMachineConfig(
+  machine: { config?: MachineConfig } | null | undefined,
+): MachineConfig | undefined {
   return isRecord(machine?.config) ? (machine!.config as MachineConfig) : undefined;
 }
 
@@ -120,30 +128,56 @@ function finalMachineLabel(machine: FinalMachine): string {
  * Structural check of a receiver target pattern. Geometry-only checks cannot
  * catch a duplicated vertex or an edge pointing outside the graph, and those
  * would silently produce a receiver nobody can ever fill.
+ *
+ * The linter is stricter than the type on purpose: patterns arrive from
+ * persisted saves and level data, so a missing `edges` array, an unknown `mode`
+ * or a malformed `growth_ladder` step must be a reported error rather than a
+ * runtime TypeError inside the world builder.
  */
 export function lintPattern(pattern: TargetPattern): string[] {
   const errors: string[] = [];
-  if (!pattern || !Array.isArray(pattern.nodes) || pattern.nodes.length === 0) {
+  if (!isRecord(pattern)) {
+    return ['образец приёмника отсутствует или повреждён'];
+  }
+  if (!Array.isArray(pattern.nodes) || pattern.nodes.length === 0) {
     return ['образец приёмника не содержит ни одной вершины'];
   }
+  // Both arrays are dereferenced when the world is built, so a missing one is a
+  // hard error here rather than a TypeError later.
+  if (!Array.isArray(pattern.edges)) {
+    errors.push('образец приёмника не содержит списка связей (edges)');
+  }
+  if (!TARGET_MODES.has(pattern.mode)) {
+    errors.push(`неизвестный режим проверки приёмника: ${String(pattern.mode)}`);
+  }
+  if (typeof pattern.rotationInvariant !== 'boolean') {
+    errors.push('образец приёмника не задаёт признак rotationInvariant');
+  }
+  if (typeof pattern.label !== 'string') {
+    errors.push('образец приёмника не содержит подписи (label)');
+  }
 
-  const offsets = new Set<HexKey>();
+  const declaredOffsets = new Set<HexKey>();
   pattern.nodes.forEach((node, idx) => {
-    if (!isValidCoord(node?.offset)) {
+    if (!isRecord(node) || !isValidCoord(node.offset)) {
       errors.push(`вершина ${idx + 1} образца имеет неверные координаты`);
       return;
     }
-    const key = hexKey(node.offset);
-    if (offsets.has(key)) {
-      errors.push(`вершина ${idx + 1} образца повторяет координаты (${key})`);
+    const declaredKey = hexKey(node.offset);
+    if (declaredOffsets.has(declaredKey)) {
+      errors.push(`вершина ${idx + 1} образца повторяет координаты (${declaredKey})`);
     }
-    offsets.add(key);
+    declaredOffsets.add(declaredKey);
+    if (node.value !== undefined && !Number.isInteger(node.value)) {
+      errors.push(`вершина ${idx + 1} образца имеет нецелое значение ${String(node.value)}`);
+    }
   });
 
   const edges = Array.isArray(pattern.edges) ? pattern.edges : [];
   const pairs = new Set<HexKey>();
   edges.forEach((edge, idx) => {
-    const { fromIdx, toIdx } = edge ?? {};
+    const fromIdx = edge?.fromIdx;
+    const toIdx = edge?.toIdx;
     if (
       !Number.isInteger(fromIdx) ||
       !Number.isInteger(toIdx) ||
@@ -166,26 +200,50 @@ export function lintPattern(pattern: TargetPattern): string[] {
     pairs.add(pairKey);
   });
 
+  if (pattern.expectedValues !== undefined) {
+    if (!Array.isArray(pattern.expectedValues) || pattern.expectedValues.some((v) => !Number.isInteger(v))) {
+      errors.push('ожидаемые значения приёмника (expectedValues) должны быть целыми числами');
+    }
+  }
   // Expected node rows are matched per delivery against `pattern.nodes`; a row
   // of the wrong length can never match and would make the receiver unusable.
-  if (Array.isArray(pattern.expectedNodeValues)) {
-    pattern.expectedNodeValues.forEach((row, idx) => {
-      if (!Array.isArray(row) || row.length !== pattern.nodes.length) {
-        errors.push(
-          `ожидаемый полимер ${idx + 1} образца описывает ${Array.isArray(row) ? row.length : 0} звеньев вместо ${pattern.nodes.length}`,
-        );
-      }
-    });
+  if (pattern.expectedNodeValues !== undefined) {
+    if (!Array.isArray(pattern.expectedNodeValues)) {
+      errors.push('ожидаемые полимеры приёмника (expectedNodeValues) должны быть массивом');
+    } else {
+      pattern.expectedNodeValues.forEach((row, idx) => {
+        if (
+          !Array.isArray(row) ||
+          row.length !== pattern.nodes.length ||
+          row.some((v) => !Number.isInteger(v))
+        ) {
+          errors.push(
+            `ожидаемый полимер ${idx + 1} образца описывает ${Array.isArray(row) ? row.length : 0} звеньев вместо ${pattern.nodes.length}`,
+          );
+        }
+      });
+    }
   }
-  if (pattern.mode === 'sum_shape' && typeof pattern.requiredSum !== 'number') {
+
+  if (pattern.mode === 'sum_shape' && !Number.isFinite(pattern.requiredSum as number)) {
     errors.push('образец режима «сохрани форму» не задаёт требуемую сумму');
   }
-  if (pattern.mode === 'growth_ladder' && !pattern.ladderStep) {
-    errors.push('образец режима «лестница» не задаёт шаг роста');
+  if (pattern.mode === 'growth_ladder') {
+    const step = pattern.ladderStep;
+    if (!isRecord(step) || (step.op !== 'add' && step.op !== 'mul') || !Number.isFinite(step.value as number) || (step.op === 'mul' && (step.value as number) === 0)) {
+      errors.push('образец режима «лестница» не задаёт корректный шаг роста (op: add|mul, value ≠ 0 для mul)');
+    }
   }
 
   return errors;
 }
+
+const TARGET_MODES: ReadonlySet<unknown> = new Set<TargetPattern['mode']>([
+  'exact',
+  'sum_shape',
+  'beam_balance',
+  'growth_ladder',
+]);
 
 /**
  * The arrangement the world builder will actually create.
@@ -213,61 +271,67 @@ export function resolveFinalPlacement(
   options: { dropConflicts?: boolean } = {},
 ): FinalMachine[] {
   const playerMachines = blocks ?? [];
-  const playerCentres = new Set<HexKey>();
-  for (const b of playerMachines) {
-    if (b && isValidCoord(b.coord)) playerCentres.add(hexKey(b.coord));
-  }
+  const dropConflicts = options.dropConflicts !== false;
 
-  const isReplacedPreset = (preset: PlacedMachine): boolean => {
-    if (preset.locked) return false;
-    if (!isValidCoord(preset.coord)) return false;
-    if (playerCentres.has(hexKey(preset.coord))) return true;
-    // A player block anywhere on this preset's own (non-centre) footprint
-    // would take over part of it — the same replacement in another disguise.
-    const centreKey = hexKey(preset.coord);
-    return getMachineOccupiedHexes(preset).some((cell) => {
-      const key = hexKey(cell);
-      return key !== centreKey && playerCentres.has(key);
-    });
-  };
+  const presets = (level.presetMachines ?? []).map<{ index: number; machine: FinalMachine }>(
+    (preset, index) => ({
+      index,
+      machine: {
+        origin: `preset:${index}`,
+        type: preset.type,
+        coord: { ...preset.coord },
+        config: preset.config,
+        locked: Boolean(preset.locked),
+      },
+    }),
+  );
+
+  // Replacement is one explicit rule: a player block on the *centre* of an
+  // unlocked preset replaces it. A block on a receiver pad is a conflict, never
+  // a silent removal — that is what the editor enforces interactively too.
+  const replacedPresetByPlayer = new Map<number, number>();
+  playerMachines.forEach((block, index) => {
+    if (!block || !isValidCoord(block.coord)) return;
+    const key = hexKey(block.coord);
+    const target = presets.find(
+      (candidate) =>
+        !candidate.machine.locked &&
+        isValidCoord(candidate.machine.coord) &&
+        hexKey(candidate.machine.coord) === key,
+    );
+    if (target) replacedPresetByPlayer.set(index, target.index);
+  });
+  const replacedPresetIndices = new Set(replacedPresetByPlayer.values());
 
   const final: FinalMachine[] = [];
   const claimed = new Set<HexKey>();
-  const dropConflicts = options.dropConflicts !== false;
 
-  for (const [index, preset] of level.presetMachines.entries()) {
-    if (isReplacedPreset(preset)) continue;
-    final.push({
-      origin: `preset:${index}`,
-      type: preset.type,
-      coord: { ...preset.coord },
-      config: preset.config,
-      locked: Boolean(preset.locked),
-    });
+  // Presets first so ids stay predictable (m_1, m_2, …).
+  for (const { index, machine } of presets) {
+    if (replacedPresetIndices.has(index)) continue;
+    final.push(machine);
     if (dropConflicts) {
-      for (const cell of getMachineOccupiedHexes(preset)) claimed.add(hexKey(cell));
+      for (const cell of getMachineOccupiedHexes(machine)) claimed.add(hexKey(cell));
     }
   }
 
   for (const [index, block] of playerMachines.entries()) {
     if (!block || !isValidCoord(block.coord)) continue;
     const key = hexKey(block.coord);
-    if (dropConflicts) {
-      if (narrowGapHexes.has(key)) continue;
-      if (platformHexes && !platformHexes.has(key)) continue;
-      if (claimed.has(key)) continue;
-    }
+    if (dropConflicts && narrowGapHexes.has(key)) continue;
+    if (dropConflicts && platformHexes && !platformHexes.has(key)) continue;
     const cells = getMachineOccupiedHexes(block);
     if (cells.length === 0) continue;
     if (getMachineConfig(block) === undefined) continue;
-    // A receiver's whole footprint must be free, not only its centre.
-    if (dropConflicts && cells.some((cell) => claimed.has(hexKey(cell)))) continue;
+
+    const replacedPresetIndex = replacedPresetByPlayer.get(index);
     final.push({
       origin: `player:${index}`,
       type: block.type,
       coord: { ...block.coord },
       config: block.config,
       locked: false,
+      ...(replacedPresetIndex === undefined ? {} : { replacesPresetIndex: replacedPresetIndex }),
     });
     if (dropConflicts) {
       for (const cell of cells) claimed.add(hexKey(cell));
