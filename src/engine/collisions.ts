@@ -90,6 +90,7 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
   }
 
   // Check Rotator Swept-Arc Obstacles (solid machine housings & non-component spheres on swept sector)
+  const orderedProposed = orderedProposedEntries(world, proposedCoordByToken);
   for (const comp of components) {
     const intent = resolvedIntentByComp.get(comp.id);
     if (!intent || intent.kind !== 'rotate') continue;
@@ -109,7 +110,7 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
           );
           return null;
         }
-        for (const [otherId, otherProposed] of orderedProposedEntries(world, proposedCoordByToken)) {
+        for (const [otherId, otherProposed] of orderedProposed) {
           if (compSet.has(otherId)) continue;
           if (hexEqual(otherProposed, sweptHex)) {
             triggerError(
