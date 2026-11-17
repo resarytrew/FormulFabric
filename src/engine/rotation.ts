@@ -124,13 +124,23 @@ function intersectIntervals(left: Interval[], right: Interval[]): Interval[] {
 }
 
 /**
+ * Минимальное расстояние между центрами гексов, разнесённых на `n` шагов по
+ * координате, в долях `HEX_SIZE` — это `1.5` (упирается в гексы вида `(0, n)`).
+ * Оценка через `√3·HEX_SIZE` (расстояние по `q`) занижает радиус поиска: на
+ * больших дугах гекс, лежащий на окружности, оказывается за пределами кольца
+ * (`(-16,0)` → гекс `(-9,-10)`: `ring` был 18 при расстоянии 19).
+ */
+const WORLD_STEP_PER_HEX = 1.5 * HEX_SIZE;
+
+/**
  * Гексы-кандидаты: те, чей центр удалён от радиуса дуги не дальше чем на
  * `HEX_SIZE` (описанную окружность гекса). Если `|d − ρ| > R`, ни одна точка
  * гекса не может лежать на окружности радиуса `ρ` (все точки гекса — в пределах
- * `R` от центра).
+ * `R` от центра). Кольцо считается по консервативной оценке расстояния, поэтому
+ * поиск — надмножество всех гексов, которые дуга может задеть.
  */
 function candidateHexes(arc: Arc, pivot: AxialCoord): AxialCoord[] {
-  const ring = Math.ceil((arc.radius + HEX_SIZE) / (HEX_SIZE * Math.sqrt(3))) + 1;
+  const ring = Math.ceil((arc.radius + HEX_SIZE) / WORLD_STEP_PER_HEX) + 1;
   const out: AxialCoord[] = [];
   for (let dq = -ring; dq <= ring; dq++) {
     const rMin = Math.max(-ring, -dq - ring);

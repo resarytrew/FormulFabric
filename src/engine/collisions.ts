@@ -230,23 +230,21 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
 
   // Check Rotator Swept-Arc Obstacles (solid machine housings & non-component spheres on swept sector).
   //
-  // Правило промежуточных траекторий (PR #4D): занятость гекса на дуге считается
-  // по объединению «начало ∪ конец» такта. Сфера, которая в этом же такте
-  // покидает сектор, всё ещё перекрывает дугу в момент, когда поворачивающаяся
-  // сфера проходит через её гекс, поэтому поворот отклоняется. Проверяемые
-  // препятствия — только объекты вне поворачиваемого компонента (сферы самого
-  // компонента движутся вместе с дугой).
+  // Правило промежуточных траекторий (PR #4D, `docs/rotation-geometry-contract.md`):
+  // гекс дуги считается занятым по **конечной** (предложенной) координате сферы.
+  // Поэтому сфера, которая в этом же такте освобождает гекс сектора, вращение не
+  // блокирует; покидать общий гекс с поворачивающимся компонентом по-прежнему
+  // нельзя — это ловит проверка наложений. Неподвижная сфера имеет конечную
+  // координату, равную начальной, поэтому стоит на месте для этой проверки.
   for (const comp of components) {
     const intent = resolvedIntentByComp.get(comp.id);
     if (!intent || intent.kind !== 'rotate') continue;
     const compSet = new Set(comp.tokenIds);
-    // Один индекс «начало ∪ конец» на компонент: гексы, занятые в этом такте
-    // сферами вне компонента.
-    const blockedHexes = new Set<HexKey>();
+    // Индекс конечной занятости строится один раз на компонент.
+    const occupiedAtEnd = new Set<HexKey>();
     for (const other of orderedTokens) {
       if (compSet.has(other.id)) continue;
-      blockedHexes.add(hexKey(other.coord));
-      blockedHexes.add(hexKey(proposedCoordByToken.get(other.id) ?? other.coord));
+      occupiedAtEnd.add(hexKey(proposedCoordByToken.get(other.id) ?? other.coord));
     }
     for (const id of comp.tokenIds) {
       const tok = world.tokens.get(id)!;
@@ -263,7 +261,7 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
           );
           return null;
         }
-        if (blockedHexes.has(sKey)) {
+        if (occupiedAtEnd.has(sKey)) {
           triggerError(
             world,
             'Столкновение на дуге поворота ротатора: сектор поворота занят другой сферой',

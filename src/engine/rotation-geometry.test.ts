@@ -300,6 +300,57 @@ test('arc: the sector at radius 6 is complete, so the previously missed hex -4,-
   assert.ok(swept.includes('-4,-3'), `ожидался гекс -4,-3 в секторе, получено ${swept.join(' ')}`);
 });
 
+test('arc: at radius 16 the candidate ring covers the countered hex (-9,-10) on the swept arc', () => {
+  // Контрпример из ревью PR #8: центр (0,0), сфера (-16,0), угол 0.55 рад.
+  // Пропуск возникал из-за оценки кольца через √3·HEX_SIZE: ring = 18 при
+  // расстоянии до гекса (-9,-10) в 19 шагов.
+  const pivot = { q: 0, r: 0 };
+  const coord = { q: -16, r: 0 };
+  const target = { q: -9, r: -10 };
+  const swept = getRotationSweptHexes(coord, pivot, 1).map(hexKey);
+  assert.ok(swept.includes(hexKey(target)), `гекс ${hexKey(target)} обязан входить в сектор: ${swept.join(' ')}`);
+
+  // Независимая проверка: точка дуги при t = 0.55 строго внутри гекса.
+  const pivotWorld = hexToWorld(pivot);
+  const startWorld = hexToWorld(coord);
+  const dx = startWorld.x - pivotWorld.x;
+  const dz = startWorld.z - pivotWorld.z;
+  const radius = Math.hypot(dx, dz);
+  const beta = Math.atan2(dz, dx);
+  const t = 0.55;
+  const point = {
+    x: pivotWorld.x + radius * Math.cos(beta + t),
+    z: pivotWorld.z + radius * Math.sin(beta + t),
+  };
+  const center = hexToWorld(target);
+  const inradius = (HEX_SIZE * Math.sqrt(3)) / 2;
+  let maxProjection = -Infinity;
+  for (let edge = 0; edge < 6; edge++) {
+    const phi = (Math.PI / 3) * edge;
+    maxProjection = Math.max(
+      maxProjection,
+      Math.cos(phi) * (point.x - center.x) + Math.sin(phi) * (point.z - center.z),
+    );
+  }
+  assert.ok(maxProjection < inradius - 1e-6, `точка дуги должна быть строго внутри: ${maxProjection} / ${inradius}`);
+});
+
+test('arc: candidate ring bound stays conservative for radii 8..17 in both directions', () => {
+  // Консервативность кольца: минимальное расстояние между центрами гексов,
+  // разнесённых на n шагов, равно 1.5·HEX_SIZE, поэтому ни один гекс дуги не
+  // может оказаться вне кольца. Проверяем через независимую плотную выборку.
+  for (let distance = 8; distance <= 17; distance++) {
+    for (const coord of [{ q: distance, r: 0 }, { q: 0, r: distance }, { q: -distance, r: distance }]) {
+      for (const steps of [1, -1] as const) {
+        const exact = new Set(getRotationSweptHexes(coord, { q: 0, r: 0 }, steps).map(hexKey));
+        for (const hex of denseSweptHexes(coord, { q: 0, r: 0 }, steps, 4000)) {
+          assert.ok(exact.has(hexKey(hex)), `радиус ${distance}: пропущен гекс ${hexKey(hex)}`);
+        }
+      }
+    }
+  }
+});
+
 test('arc: the result never depends on the radius through a sampling rate', () => {
   // Один и тот же угловой сектор, разные радиусы: список гексов меняется только
   // потому, что меняется сама окружность, но каждая дуга покрыта целиком.
@@ -406,7 +457,7 @@ test('arc: level data exposes rotation sectors of radius 7, and they are now cov
   console.log(`\nАудит вращения: максимум ${maxDistance} гексов от ротатора до платформы (${where}); сектор проверяется непрерывно.\n`);
 });
 
-test('arc: a sphere that vacates a swept hex in the same tick blocks the rotation', () => {
+test('arc: a sphere that vacates a swept hex in the same tick does not block the rotation', () => {
   const world = createWorldFromLevel(levelWithPresets('R60-vacating', [
     preset('rotator', 0, 0, { dir: 0, rotMode: 'cw' }),
     preset('conveyor', 1, 1, { dir: 0 }),
@@ -418,19 +469,19 @@ test('arc: a sphere that vacates a swept hex in the same tick blocks the rotatio
 
   const arc = getRotationSweptHexes({ q: 2, r: 0 }, { q: 0, r: 0 }, 1).map(hexKey);
   assert.ok(arc.includes('1,1'), `подготовка теста: дуга сферы (2,0) должна проходить через 1,1 (${arc.join(' ')})`);
-  const before = coords(world);
 
   stepSimulation(world);
 
-  // Правило контракта: занятость сектора считается по объединению «начало ∪ конец».
-  assert.equal(world.status, 'error', 'сфера, покидающая сектор в том же такте, всё равно перекрывает дугу');
-  assert.match(world.errorReason ?? '', /сектор поворота занят другой сферой/);
-  assertUnmoved(world, before);
+  // Правило контракта: занятость сектора считается по конечной координате сферы.
+  assert.equal(world.status, 'running', world.errorReason ?? '');
+  assert.deepEqual(world.tokens.get('near')!.coord, rotateAroundPivot({ q: 1, r: 0 }, { q: 0, r: 0 }, 1));
+  assert.deepEqual(world.tokens.get('far')!.coord, rotateAroundPivot({ q: 2, r: 0 }, { q: 0, r: 0 }, 1));
+  assert.deepEqual(world.tokens.get('leaver')!.coord, { q: 2, r: 1 }, 'вторая сфера уезжает по конвейеру');
   assertBondGeometry(world, 'vacating sphere');
 });
 
-test('arc: a sphere entering the sector in the same tick also blocks the rotation', () => {
-  // Сфера приезжает конвейером на гекс сектора в том же такте.
+test('arc: a sphere entering the sector in the same tick blocks the rotation', () => {
+  // Сфера приезжает конвейером на гекс сектора в том же такте: конечная позиция занята.
   const world = createWorldFromLevel(levelWithPresets('R60-entering', [
     preset('rotator', 0, 0, { dir: 0, rotMode: 'cw' }),
     preset('conveyor', 2, 1, { dir: 3 }),
