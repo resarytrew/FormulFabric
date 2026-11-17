@@ -313,7 +313,7 @@ test('D: 200 seeded random worlds are identical under reversed storage order', (
 // Задокументированные расхождения по идентификаторам и диагностике
 // ---------------------------------------------------------------------------
 
-test('[P2] token ids are allocated in machine storage order when two sources spawn in the same tick', () => {
+test('ids: two sources spawning in the same tick allocate the same token ids under reversed storage order', () => {
   const level = levelWithPresets('D-two-sources-ids', [
     preset('spawner', -2, 0, { dir: 0, sequence: [2], loopSequence: false, spawnInterval: 5 }),
     preset('spawner', 0, -2, { dir: 1, sequence: [3], loopSequence: false, spawnInterval: 5 }),
@@ -325,6 +325,34 @@ test('[P2] token ids are allocated in machine storage order when two sources spa
   stepSimulation(reversed);
 
   assertMatchesRule(tokensAt(forward), tokensAt(reversed), 'координаты и значения не должны зависеть от порядка');
+  // Источники обрабатываются в порядке координат: (-2, 0) → выход (-1, 0) раньше (0, -2) → (0, -1).
+  assertMatchesRule('-1,0=t_1;0,-1=t_2', snapshotTokenIdsByCoord(forward));
+  assertMatchesRule(snapshotTokenIdsByCoord(forward), snapshotTokenIdsByCoord(reversed), 'идентификаторы не зависят от порядка');
+});
+
+test('[P2] transformer outputs allocate token ids in token storage order within one tick', () => {
+  // Копии/остатки/половины создаются в фазе механизмов; порядок их идентификаторов
+  // сейчас задаёт порядок обхода world.tokens, то есть порядок хранения в Map.
+  const level = levelWithPresets('D-transformer-ids', [
+    preset('conveyor', -1, 0, { dir: 0 }),
+    preset('dup', 0, 0, { dir: 0, altDir: 4 }),
+    preset('conveyor', -1, 2, { dir: 0 }),
+    preset('dup', 0, 2, { dir: 0, altDir: 4 }),
+  ], { radius: 4 });
+
+  const build = (reverse: boolean): SimulationWorld => {
+    const world = createWorldFromLevel(level);
+    addToken(world, 'a', 2, -1, 0, 1);
+    addToken(world, 'b', 5, -1, 2, 2);
+    return reverse ? reverseStorageOrder(world) : world;
+  };
+
+  const forward = build(false);
+  const reversed = build(true);
+  stepSimulation(forward);
+  stepSimulation(reversed);
+
+  assertMatchesRule(tokensAt(forward), tokensAt(reversed), 'физика не должна зависеть от порядка');
   const forwardIds = snapshotTokenIdsByCoord(forward);
   const reverseIds = snapshotTokenIdsByCoord(reversed);
   assert.notEqual(forwardIds, reverseIds, 'подготовка теста: идентификаторы должны зависеть от порядка');
@@ -332,9 +360,9 @@ test('[P2] token ids are allocated in machine storage order when two sources spa
   documentDivergence({
     id: 'token-id-allocation-order',
     severity: 'P2',
-    title: 'Идентификаторы новых сфер (t_N) выдаются в порядке обхода world.machines',
-    expected: 'идентификаторы не должны зависеть от порядка хранения: например, привязка к координате источника или к (spawnOrder)',
-    actual: 'идентификаторы переставляются вместе с порядком механизмов, хотя координаты и значения совпадают',
+    title: 'Идентификаторы новых сфер (t_N) выдаются в порядке обхода world.machines/world.tokens',
+    expected: 'идентификаторы не должны зависеть от порядка хранения: стабильный порядок событий создания внутри фазы такта',
+    actual: 'копии двух дубликаторов нумеруются в порядке обхода world.tokens, хотя координаты и значения совпадают',
     note: 'Физика совпадает, но меняются события, consumedTokens и анимационные ключи; PR #4B — стабильная нумерация.',
   }, forwardIds, reverseIds);
 });

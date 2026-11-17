@@ -481,36 +481,103 @@ test('swap index: the swapper exception covers its own two-hex exchange, while t
 });
 
 // ---------------------------------------------------------------------------
-// Задокументированные расхождения (порядок хранения меняет результат/метаданные)
+// P1 (PR #4B): два источника с общим выходом — стабильное правило выбора
 // ---------------------------------------------------------------------------
 
-test('[P1] two spawners sharing one exit hex: the winner depends on machine storage order', () => {
-  // Валидация уровня такую конфигурацию сейчас принимает (см. assertion ниже),
-  // а какой источник выпустит число — решает порядок обхода world.machines.
-  const level = levelWithPresets('C-shared-exit', [
-    preset('spawner', -2, 0, { dir: 0, sequence: [2], loopSequence: false, spawnInterval: 5 }),
-    preset('spawner', -1, -1, { dir: 1, sequence: [3], loopSequence: false, spawnInterval: 5 }),
-  ], { radius: 3 });
+const sharedExitPresets = (): ReturnType<typeof preset>[] => [
+  preset('spawner', -2, 0, { dir: 0, sequence: [2], loopSequence: false, spawnInterval: 5 }),
+  preset('spawner', -1, -1, { dir: 1, sequence: [3], loopSequence: false, spawnInterval: 5 }),
+];
 
+/** Механизм по координате: `id` (m_N) не зависит от того, как читать тест, а координата — да. */
+function machineAt(world: SimulationWorld, q: number, r: number) {
+  const machine = world.machines.get(hexKey({ q, r }));
+  assert.ok(machine, `нет механизма на (${q}, ${r})`);
+  return machine!;
+}
+
+test('sources: two spawners sharing one exit hex — the source with the smaller coordinate wins, independent of Map order', () => {
+  const level = levelWithPresets('C-shared-exit', sharedExitPresets(), { radius: 3 });
   const forward = createWorldFromLevel(level);
-  assert.equal(forward.status, 'idle', 'подготовка: уровень с общим выходом источников считается корректным');
-  addToken;
+  assert.equal(forward.status, 'idle', 'подготовка: раскладка с общим выходом источников допустима');
   const reverse = reverseStorageOrder(createWorldFromLevel(level));
 
   stepSimulation(forward);
   stepSimulation(reverse);
 
-  assert.equal(tokensAt(forward), '2@-1,0');
-  assert.equal(tokensAt(reverse), '3@-1,0');
+  // Правило: при конкуренции за гекс первым считается источник с меньшей `q`,
+  // при равенстве — с меньшей `r`. Здесь это источник на (-2, 0), он и выпускает.
+  assertMatchesRule('2@-1,0', tokensAt(forward));
+  assertMatchesRule(tokensAt(forward), tokensAt(reverse), 'результат не должен зависеть от порядка хранения');
 
-  documentDivergence({
-    id: 'spawner-shared-exit',
-    severity: 'P1',
-    title: 'Два источника с общим выходным гексом: победитель зависит от порядка хранения механизмов',
-    expected: 'детерминированное правило (например, побеждает источник с меньшим spawnOrder, проигравший ждёт) либо запрет такой раскладки валидатором',
-    actual: 'побеждает первый источник в порядке world.machines; при обратном порядке в мир попадает другое число',
-    note: 'PR #4B: ввести стабильный порядок источников (по координате/идентификатору) и/или отклонять общий выход на этапе валидации.',
-  }, tokensAt(forward), tokensAt(reverse));
+  const winner = machineAt(forward, -2, 0);
+  assertMatchesRule(1, winner.state.spawnIndex, 'победитель сдвинул свою последовательность');
+  assertMatchesRule(4, winner.state.cooldown, 'победитель начал перезарядку');
+  const waiting = machineAt(forward, -1, -1);
+  assertMatchesRule(0, waiting.state.spawnIndex, 'проигравший не сдвигает последовательность');
+  assertMatchesRule(0, waiting.state.cooldown, 'проигравший не тратит значение и не перезаряжается');
+  assertMatchesRule(3, waiting.config.sequence![waiting.state.spawnIndex], 'значение проигравшего сохранено');
+
+  const eventLog = (world: SimulationWorld) => world.events.map((e) => `${e.id}:${e.type}:${e.coord.q},${e.coord.r}`);
+  assertMatchesRule(eventLog(forward), eventLog(reverse), 'порядок событий тоже обязан совпадать');
+  assertMatchesRule(
+    ['1:spawn:-1,0', '2:blocked:-1,0'],
+    eventLog(forward),
+    'сначала выпуск победителя, затем ожидание проигравшего',
+  );
+});
+
+test('sources: shared exit — the waiting source keeps its value and emits it once the hex frees up', () => {
+  const build = (reverseMap: boolean): SimulationWorld => {
+    const world = createWorldFromLevel(levelWithPresets('C-shared-exit-free', sharedExitPresets(), { radius: 3 }));
+    return reverseMap ? reverseStorageOrder(world) : world;
+  };
+
+  for (const reverseMap of [false, true]) {
+    const world = build(reverseMap);
+    stepSimulation(world);
+    assertMatchesRule('2@-1,0', tokensAt(world), 'подготовка: первым выпустил источник с меньшей координатой');
+
+    // Освобождаем общий выход и даём ещё один такт.
+    world.tokens.delete([...world.tokens.keys()][0]);
+    stepSimulation(world);
+
+    assertMatchesRule('3@-1,0', tokensAt(world), `reverse=${reverseMap}: проигравший выпускает своё значение`);
+    const emitted = [...world.tokens.values()][0];
+    assertMatchesRule(2, emitted.spawnOrder, 'новая сфера получает следующий стабильный spawnOrder');
+    const waiting = machineAt(world, -1, -1);
+    assertMatchesRule(1, waiting.state.spawnIndex, 'после выпуска индекс проигравшего сдвинулся ровно на один');
+    assertMatchesRule(4, waiting.state.cooldown, 'после выпуска проигравший получил обычную перезарядку');
+    assert.ok(
+      world.events.some((e) => e.type === 'spawn' && e.coord.q === -1 && e.coord.r === 0),
+      'ожидание завершилось событием выпуска',
+    );
+  }
+});
+
+test('sources: shared exit — no value is lost over a long run, and every value is released exactly once', () => {
+  const released: number[] = [];
+  const world = createWorldFromLevel(levelWithPresets('C-shared-exit-drain', [
+    preset('spawner', -2, 0, { dir: 0, sequence: [2, 4], loopSequence: false, spawnInterval: 1 }),
+    preset('spawner', -1, -1, { dir: 1, sequence: [3, 5], loopSequence: false, spawnInterval: 1 }),
+  ], { radius: 6 }));
+
+  for (let tick = 0; tick < 40; tick++) {
+    // Сразу отдаём выпущенное «наружу», чтобы выход освобождался каждый такт.
+    for (const tok of [...world.tokens.values()]) {
+      released.push(tok.value);
+      world.tokens.delete(tok.id);
+    }
+    stepSimulation(world);
+    if (world.tokens.size === 0 && world.machines.size > 0) {
+      const drained = [...world.machines.values()].every(
+        (m) => m.type !== 'spawner' || m.state.spawnIndex >= (m.config.sequence ?? []).length,
+      );
+      if (drained) break;
+    }
+  }
+
+  assertMatchesRule([2, 4, 3, 5], released, `каждое значение выпущено ровно один раз: ${released.join(',')}`);
 });
 
 test('[P2] equal tier+signature intents: only the first machine in storage order flashes', () => {
@@ -575,7 +642,7 @@ test('[P2] pusher and magnet pushing one sphere: moveSource depends on storage o
 
 test('collision audit summary: documented divergences of this suite', () => {
   const ids = documentedViolations().map((v) => v.id).sort();
-  assert.deepEqual(ids, ['equal-intent-choice', 'pusher-magnet-move-source', 'spawner-shared-exit']);
+  assert.deepEqual(ids, ['equal-intent-choice', 'pusher-magnet-move-source']);
   console.log(`\n=== Аудит столкновений: расхождения (${ids.length}) ===\n${formatViolationTable()}\n`);
 });
 
