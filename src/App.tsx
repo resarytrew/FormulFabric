@@ -1,3 +1,4 @@
+import { loadSavedUiStyle, loadSavedProgress, saveProgress, loadSavedVariants, saveVariants, loadSavedHints, saveHints, saveUiStyle, type PlacedBlock, type LevelVariantsMap } from './services/storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sound } from './audio/sound';
 import {
@@ -48,18 +49,6 @@ const BASE_SIM_TICK_MS = 1050;
 
 type AppState = 'title' | 'playing' | 'paused' | 'gameover';
 
-interface PlacedBlock {
-  type: MachineType;
-  coord: AxialCoord;
-  config: MachineConfig;
-}
-
-interface StoredVariant {
-  blocks: PlacedBlock[];
-  blocksSig?: string;
-  bestTicks?: number;
-}
-
 function getBlocksSignature(blocks: PlacedBlock[]): string {
   return blocks
     .slice()
@@ -85,77 +74,8 @@ function sanitizeBlocksForLevel(lvl: LevelDefinition, blocks: PlacedBlock[]): Pl
     }));
 }
 
-type LevelVariantsMap = Record<string, Partial<Record<VariantSlotId, StoredVariant>>>;
-
-const PROGRESS_STORAGE_KEY = 'fabrika_chisel_progress_v1';
-const VARIANTS_STORAGE_KEY = 'fabrika_chisel_variants_v1';
-const HINTS_STORAGE_KEY = 'fabrika_chisel_hints_v1';
-const UI_STYLE_STORAGE_KEY = 'fabrika_chisel_ui_style_v1';
 const MAX_EDIT_HISTORY = 50;
 const MAX_TICK_HISTORY = 80;
-
-function loadSavedUiStyle(): UiStyleMode {
-  try {
-    const raw = localStorage.getItem(UI_STYLE_STORAGE_KEY);
-    return raw === 'classic' ? 'classic' : 'skyline';
-  } catch {
-    return 'skyline';
-  }
-}
-
-function loadSavedProgress(): Record<string, LevelProgressRecord> {
-  try {
-    const raw = localStorage.getItem(PROGRESS_STORAGE_KEY);
-    if (!raw) return {};
-    return JSON.parse(raw) as Record<string, LevelProgressRecord>;
-  } catch {
-    return {};
-  }
-}
-
-function saveProgress(p: Record<string, LevelProgressRecord>) {
-  try {
-    localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(p));
-  } catch {
-    // ignore storage errors
-  }
-}
-
-function loadSavedVariants(): LevelVariantsMap {
-  try {
-    const raw = localStorage.getItem(VARIANTS_STORAGE_KEY);
-    if (!raw) return {};
-    return JSON.parse(raw) as LevelVariantsMap;
-  } catch {
-    return {};
-  }
-}
-
-function saveVariants(v: LevelVariantsMap) {
-  try {
-    localStorage.setItem(VARIANTS_STORAGE_KEY, JSON.stringify(v));
-  } catch {
-    // ignore storage errors
-  }
-}
-
-function loadSavedHints(): Record<string, number> {
-  try {
-    const raw = localStorage.getItem(HINTS_STORAGE_KEY);
-    if (!raw) return {};
-    return JSON.parse(raw) as Record<string, number>;
-  } catch {
-    return {};
-  }
-}
-
-function saveHints(h: Record<string, number>) {
-  try {
-    localStorage.setItem(HINTS_STORAGE_KEY, JSON.stringify(h));
-  } catch {
-    // ignore storage errors
-  }
-}
 
 export default function App() {
   const autostart = useMemo(() => {
@@ -251,7 +171,7 @@ export default function App() {
   useEffect(() => {
     document.documentElement.classList.toggle('dark', uiStyle === 'skyline');
     try {
-      localStorage.setItem(UI_STYLE_STORAGE_KEY, uiStyle);
+      saveUiStyle(uiStyle);
     } catch {
       // ignore storage errors
     }
