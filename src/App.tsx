@@ -1,3 +1,4 @@
+import { useEditHistory } from './hooks/useEditHistory';
 import { loadSavedUiStyle, loadSavedProgress, saveProgress, loadSavedVariants, saveVariants, loadSavedHints, saveHints, saveUiStyle, type PlacedBlock, type LevelVariantsMap } from './services/storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sound } from './audio/sound';
@@ -74,7 +75,6 @@ function sanitizeBlocksForLevel(lvl: LevelDefinition, blocks: PlacedBlock[]): Pl
     }));
 }
 
-const MAX_EDIT_HISTORY = 50;
 const MAX_TICK_HISTORY = 80;
 
 export default function App() {
@@ -98,8 +98,7 @@ export default function App() {
   const [activeVariant, setActiveVariant] = useState<VariantSlotId>('A');
   const [currentLevelId, setCurrentLevelId] = useState<string>('lvl-01');
   const [playerBlocks, setPlayerBlocks] = useState<PlacedBlock[]>([]);
-  const [editPast, setEditPast] = useState<PlacedBlock[][]>([]);
-  const [editFuture, setEditFuture] = useState<PlacedBlock[][]>([]);
+  const { canUndo, canRedo, record: recordEdit, clear: clearEditHistory, undo, redo } = useEditHistory();
   const [inspectedCoord, setInspectedCoord] = useState<AxialCoord | null>(null);
   const [victoryReport, setVictoryReport] = useState<VerificationReport | null>(null);
   const [failedVerificationReport, setFailedVerificationReport] =
@@ -214,14 +213,12 @@ export default function App() {
   const commitBlocks = useCallback(
     (nextBlocks: PlacedBlock[], recordHistory = true) => {
       if (recordHistory) {
-        const prevSnapshot = structuredClone(playerBlocksRef.current);
-        setEditPast((past) => [...past.slice(-(MAX_EDIT_HISTORY - 1)), prevSnapshot]);
-        setEditFuture([]);
+        recordEdit(playerBlocksRef.current);
       }
       setPlayerBlocks(nextBlocks);
       rebuildWorld(currentLevelRef.current, nextBlocks);
     },
-    [rebuildWorld],
+    [rebuildWorld, recordEdit],
   );
 
   const loadLevel = useCallback(
@@ -233,8 +230,7 @@ export default function App() {
       setCurrentLevelId(lvl.id);
       setActiveVariant('A');
       setPlayerBlocks([]);
-      setEditPast([]);
-      setEditFuture([]);
+      clearEditHistory();
       setInspectedCoord(null);
       setSelectedTool(lvl.availableTools[0] ?? 'conveyor');
       setSelectedDir(0);
@@ -247,7 +243,7 @@ export default function App() {
       rebuildWorld(lvl, []);
       setAppState(nextState);
     },
-    [rebuildWorld],
+    [rebuildWorld, clearEditHistory],
   );
 
   const handleStartCampaign = useCallback(() => {
@@ -517,32 +513,28 @@ export default function App() {
   }, [currentLevel, playerBlocks, rebuildWorld]);
 
   const handleUndo = useCallback(() => {
-    if (isSimPlaying || editPast.length === 0) return;
-    const prev = editPast[editPast.length - 1];
-    const currentSnapshot = structuredClone(playerBlocksRef.current);
-    setEditPast((p) => p.slice(0, -1));
-    setEditFuture((f) => [currentSnapshot, ...f]);
+    if (isSimPlaying) return;
+    const prev = undo(playerBlocksRef.current);
+    if (!prev) return;
     setPlayerBlocks(prev);
     setInspectedCoord((sel) =>
       sel && prev.some((b) => hexEqual(b.coord, sel)) ? sel : null,
     );
     rebuildWorld(currentLevelRef.current, prev);
     sound.playStep();
-  }, [isSimPlaying, editPast, rebuildWorld]);
+  }, [isSimPlaying, undo, rebuildWorld]);
 
   const handleRedo = useCallback(() => {
-    if (isSimPlaying || editFuture.length === 0) return;
-    const next = editFuture[0];
-    const currentSnapshot = structuredClone(playerBlocksRef.current);
-    setEditFuture((f) => f.slice(1));
-    setEditPast((p) => [...p.slice(-(MAX_EDIT_HISTORY - 1)), currentSnapshot]);
+    if (isSimPlaying) return;
+    const next = redo(playerBlocksRef.current);
+    if (!next) return;
     setPlayerBlocks(next);
     setInspectedCoord((sel) =>
       sel && next.some((b) => hexEqual(b.coord, sel)) ? sel : null,
     );
     rebuildWorld(currentLevelRef.current, next);
     sound.playStep();
-  }, [isSimPlaying, editFuture, rebuildWorld]);
+  }, [isSimPlaying, redo, rebuildWorld]);
 
   const handleUpdateMachineConfig = useCallback(
     (coord: AxialCoord, patch: Partial<MachineConfig>) => {
@@ -1229,8 +1221,8 @@ export default function App() {
             sandboxSeqInput={sandboxSeqInput}
             isSandbox={currentLevel.id === 'sandbox'}
             isRunning={isSimPlaying}
-            canUndo={editPast.length > 0}
-            canRedo={editFuture.length > 0}
+            canUndo={canUndo}
+            canRedo={canRedo}
             hasDemo={canShowDemo}
             hintsCount={currentLevel.hints?.length ?? 0}
             revealedHintsCount={revealedHintsCount}
