@@ -580,17 +580,17 @@ test('sources: shared exit — no value is lost over a long run, and every value
   assertMatchesRule([2, 4, 3, 5], released, `каждое значение выпущено ровно один раз: ${released.join(',')}`);
 });
 
-test('[P2] equal tier+signature intents: only the first machine in storage order flashes', () => {
-  const build = (reverse: boolean): SimulationWorld => {
+test('intents: equal tier+signature intents resolve to the machine with the smaller source coordinate, independent of Map order', () => {
+  const build = (reverseMap: boolean): SimulationWorld => {
     const presets = [
       preset('conveyor', 0, 0, { dir: 0 }),
       preset('conveyor', 1, 0, { dir: 0 }),
     ];
-    const world = createWorldFromLevel(levelWithPresets(`C-equal-intent-${reverse}`, reverse ? [...presets].reverse() : presets, { radius: 4 }));
+    const world = createWorldFromLevel(levelWithPresets(`C-equal-intent-${reverseMap}`, reverseMap ? [...presets].reverse() : presets, { radius: 4 }));
     addToken(world, 'a', 2, 0, 0, 1);
     addToken(world, 'b', 3, 1, 0, 2);
     bondTokens(world, 'a', 'b');
-    return world;
+    return reverseMap ? reverseStorageOrder(world) : world;
   };
   const forward = build(false);
   const reverse = build(true);
@@ -602,47 +602,40 @@ test('[P2] equal tier+signature intents: only the first machine in storage order
       .map((m) => `${hexKey(m.coord)}=${m.state.activeFlashTicks}`)
       .sort()
       .join(',');
-  assert.equal(tokensAt(forward), tokensAt(reverse), 'координаты обязаны совпадать');
-
-  documentDivergence({
-    id: 'equal-intent-choice',
-    severity: 'P2',
-    title: 'Равнозначные намерения (одинаковый tier и signature): источник действия выбирается по порядку Map',
-    expected: 'стабильный compareIntents после проверки tier/signature (pushChainIndex, координата источника, тип механизма), как в п. 3.2',
-    actual: 'выбирается первое намерение в массиве, то есть механизм, который раньше лежит в world.machines — вспышку получает только он',
-    note: 'Координаты сфер совпадают; расходятся метаданные источника, вспышка механизма и события (влияет на анимацию и трассы).',
-  }, flash(forward), flash(reverse));
+  assertMatchesRule(tokensAt(forward), tokensAt(reverse), 'координаты обязаны совпадать');
+  assertMatchesRule('2@1,0 3@2,0', tokensAt(forward), 'полимер едет целиком');
+  assertMatchesRule(flash(forward), flash(reverse), 'вспышка механизма не зависит от порядка хранения');
+  assertMatchesRule('0,0=1,1,0=0', flash(forward), 'источником действия считается лента с меньшей координатой');
 });
 
-test('[P2] pusher and magnet pushing one sphere: moveSource depends on storage order', () => {
-  const build = (reverse: boolean): SimulationWorld => {
+test('intents: pusher and magnet pulling one sphere in the same direction pick the same source and moveSource regardless of Map order', () => {
+  const build = (reverseMap: boolean): SimulationWorld => {
     const presets = [
       preset('pusher', -1, 0, { dir: 0 }),
       preset('magnet', 2, 0, { dir: 3 }),
     ];
-    const world = createWorldFromLevel(levelWithPresets(`C-pusher-magnet-${reverse}`, reverse ? [...presets].reverse() : presets, { radius: 4 }));
+    const world = createWorldFromLevel(levelWithPresets(`C-pusher-magnet-${reverseMap}`, reverseMap ? [...presets].reverse() : presets, { radius: 4 }));
     addToken(world, 't', 5, 0, 0, 1);
-    return world;
+    return reverseMap ? reverseStorageOrder(world) : world;
   };
   const forward = build(false);
   const reverse = build(true);
   stepSimulation(forward);
   stepSimulation(reverse);
 
-  assert.equal(tokensAt(forward), tokensAt(reverse), 'координаты обязаны совпадать');
-  documentDivergence({
-    id: 'pusher-magnet-move-source',
-    severity: 'P2',
-    title: 'Толкатель и магнит тянут одну сферу в одну сторону: moveSource/pushChainIndex зависят от порядка хранения',
-    expected: 'детерминированный выбор источника (п. 3.2) — одинаковый moveSource при одинаковом мире',
-    actual: 'moveSource равен типу того механизма, который первым лежит в world.machines (pusher либо magnet)',
-    note: 'Физические координаты и значения совпадают; расходятся анимационные метаданные сферы.',
-  }, forward.tokens.get('t')!.moveSource, reverse.tokens.get('t')!.moveSource);
+  assertMatchesRule(tokensAt(forward), tokensAt(reverse), 'координаты обязаны совпадать');
+  assertMatchesRule('5@1,0', tokensAt(forward));
+  const source = (world: SimulationWorld) => ({
+    moveSource: world.tokens.get('t')!.moveSource,
+    pushChainIndex: world.tokens.get('t')!.pushChainIndex,
+  });
+  assertMatchesRule(source(forward), source(reverse), 'метаданные источника не зависят от порядка хранения');
+  assertMatchesRule({ moveSource: 'pusher', pushChainIndex: 0 }, source(forward), 'побеждает источник с меньшей координатой');
 });
 
 test('collision audit summary: documented divergences of this suite', () => {
   const ids = documentedViolations().map((v) => v.id).sort();
-  assert.deepEqual(ids, ['equal-intent-choice', 'pusher-magnet-move-source']);
+  assert.deepEqual(ids, []);
   console.log(`\n=== Аудит столкновений: расхождения (${ids.length}) ===\n${formatViolationTable()}\n`);
 });
 

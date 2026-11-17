@@ -1,4 +1,5 @@
 import type { ConnectedComponent } from './components';
+import { sortedMachines } from './deterministic-order';
 import { triggerError } from './events';
 import { hexKey, hexNeighbor, oppositeDir, rotateDir } from './hex-math';
 import { evaluateFilterRule } from './operations';
@@ -18,7 +19,10 @@ export function computeMovementIntents(world: SimulationWorld, components: Conne
 
   const activePushers: Array<{ machine: MachineInstance; rootComp: ConnectedComponent }> = [];
 
-  for (const machine of world.machines.values()) {
+  // Механизмы обходятся в каноническом порядке координат: порядок массива
+  // намерений (а значит и порядок координат в диагностике конфликта тяги)
+  // перестаёт зависеть от порядка хранения в world.machines.
+  for (const machine of sortedMachines(world)) {
     const mKey = hexKey(machine.coord);
 
     if (

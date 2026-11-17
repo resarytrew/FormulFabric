@@ -1,5 +1,6 @@
 import type { ConnectedComponent } from './components';
 import { triggerError } from './events';
+import { pickBestIntent } from './intent-order';
 import { hexEqual, hexKey, hexNeighbor, rotateAroundPivot } from './hex-math';
 import { getRotationSweptHexes } from './rotation';
 import { SOLID_MACHINE_TYPES } from './world';
@@ -33,15 +34,11 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
       );
       return null;
     }
-    let chosen = topIntents[0];
-    for (const cand of topIntents) {
-      const candIdx = cand.kind === 'move' ? (cand.pushChainIndex ?? 0) : 0;
-      const chosenIdx = chosen.kind === 'move' ? (chosen.pushChainIndex ?? 0) : 0;
-      if (candIdx < chosenIdx) {
-        chosen = cand;
-      }
-    }
-    resolvedIntentByComp.set(comp.id, chosen);
+    // Равнозначные кандидаты (одинаковый tier и signature) разрешаются полным
+    // детерминированным порядком: pushChainIndex, координата источника, тип
+    // механизма (см. compareIntents). Порядок массива намерений больше не
+    // влияет на выбор, поэтому Map-порядок механизмов не наблюдаем.
+    resolvedIntentByComp.set(comp.id, pickBestIntent(topIntents));
   }
 
   // Compute proposed coordinates for every token
