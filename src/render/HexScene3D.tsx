@@ -1,4 +1,5 @@
 import { createEventEffects } from './eventEffects';
+import { createDecorationSynchronizer, decorationSignature } from './decorationSignature';
 import { animateMachines } from './animateMachines';
 import { createSceneInput } from './sceneInput';
 import { useSceneCamera } from './useSceneCamera';
@@ -257,7 +258,7 @@ export function HexScene3D({
   const machineSig = JSON.stringify(Array.from(world.machines.values(), m => machineMeshSignature(m, world.machines, theme)));
   useEffect(() => {
     sceneApiRef.current?.syncMachines();
-  }, [machineSig]);
+  }, [machineSig, platformSig]);
 
   useSceneEvents(events, world.tick, isSimPlaying, isTitleMode, tickProgressRef, sceneApiRef);
 
@@ -1302,10 +1303,8 @@ export function HexScene3D({
       });
     }
 
+    const syncDecorations = createDecorationSynchronizer();
     function syncMachines() {
-      clearGroup(machineDecorationGroup);
-      clearGroup(channelGroup);
-      activeChannelMat = null;
       for (const [key, mesh] of machineMeshes) {
         if (!propsRef.current.world.machines.has(key)) {
           machineGroup.remove(mesh);
@@ -1316,12 +1315,6 @@ export function HexScene3D({
       }
       const pal = PALETTES[propsRef.current.theme];
       const nextIds = new Map<HexKey, string>();
-
-      // Flush recessed socket collar geometry shared across spawner/sink tiles
-      const socketRingGeo = new THREE.RingGeometry(HEX_SIZE * 0.72, HEX_SIZE * 0.84, 6);
-      socketRingGeo.rotateX(-Math.PI / 2);
-      socketRingGeo.rotateY(Math.PI / 6);
-      let hasIoSocket = false;
 
       for (const [k, machine] of propsRef.current.world.machines.entries()) {
         const sig = `${machine.id}:${machine.type}`;
@@ -1343,42 +1336,51 @@ export function HexScene3D({
           machineMeshes.set(k, mesh);
           machineMeshSignatures.set(k, meshSig);
         }
+      }
 
-        if (machine.type === 'spawner' || machine.type === 'sink') {
-          hasIoSocket = true;
-          const sockCol = machine.type === 'spawner' ? pal.accent : pal.accentSecondary;
-          for (const pad of getMachineFootprint(machine)) {
-            const pw = hexToWorld(pad);
-            const sockMat = new THREE.MeshBasicMaterial({
-              color: sockCol,
-              transparent: true,
-              opacity: 0.42,
-              polygonOffset: true,
-              polygonOffsetFactor: -1,
-              polygonOffsetUnits: -1,
-            });
-            const sock = new THREE.Mesh(socketRingGeo, sockMat);
-            sock.position.set(pw.x, 0.006, pw.z);
-            machineDecorationGroup.add(sock);
+      const world = propsRef.current.world;
+      const signature = decorationSignature(world.machines, world.platformHexes, propsRef.current.theme);
+      syncDecorations(signature, () => {
+        clearGroup(machineDecorationGroup);
+        clearGroup(channelGroup);
+        activeChannelMat = null;
+
+        // Flush recessed socket collar geometry shared across spawner/sink tiles
+        const socketRingGeo = new THREE.RingGeometry(HEX_SIZE * 0.72, HEX_SIZE * 0.84, 6);
+        socketRingGeo.rotateX(-Math.PI / 2);
+        socketRingGeo.rotateY(Math.PI / 6);
+        let hasIoSocket = false;
+        for (const machine of world.machines.values()) {
+          if (machine.type === 'spawner' || machine.type === 'sink') {
+            hasIoSocket = true;
+            const sockCol = machine.type === 'spawner' ? pal.accent : pal.accentSecondary;
+            for (const pad of getMachineFootprint(machine)) {
+              const pw = hexToWorld(pad);
+              const sockMat = new THREE.MeshBasicMaterial({
+                color: sockCol,
+                transparent: true,
+                opacity: 0.42,
+                polygonOffset: true,
+                polygonOffsetFactor: -1,
+                polygonOffsetUnits: -1,
+              });
+              const sock = new THREE.Mesh(socketRingGeo, sockMat);
+              sock.position.set(pw.x, 0.006, pw.z);
+              machineDecorationGroup.add(sock);
+            }
           }
         }
-      }
-      if (!hasIoSocket) {
-        socketRingGeo.dispose();
-      }
+        if (!hasIoSocket) socketRingGeo.dispose();
 
-      // Seamless conveyor track junction couplers
-      const connectors = buildConveyorConnectorGroup(propsRef.current.world.machines, pal);
-      machineDecorationGroup.add(connectors);
+        // Seamless conveyor track junction couplers
+        const connectors = buildConveyorConnectorGroup(world.machines, pal);
+        machineDecorationGroup.add(connectors);
 
-      // Inlaid luminous pathway channels connecting adjacent flows
-      const inlaid = buildInlaidChannelGroup(
-        propsRef.current.world.machines,
-        propsRef.current.world.platformHexes,
-        pal,
-      );
-      channelGroup.add(inlaid.group);
-      activeChannelMat = inlaid.material;
+        // Inlaid luminous pathway channels connecting adjacent flows
+        const inlaid = buildInlaidChannelGroup(world.machines, world.platformHexes, pal);
+        channelGroup.add(inlaid.group);
+        activeChannelMat = inlaid.material;
+      });
 
       prevMachineIds.clear();
       for (const [k, sig] of nextIds.entries()) {
