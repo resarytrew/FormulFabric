@@ -16,7 +16,6 @@ import {
 import {
   dirToWorldYaw,
   HEX_SIZE,
-  hexDistance,
   hexEqual,
   hexKey,
   hexNeighbor,

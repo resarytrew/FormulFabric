@@ -1,11 +1,10 @@
 import { useEditorActions } from './hooks/useEditorActions';
 import { useSimulationStep } from './hooks/useSimulationStep';
-import { getBlocksSignature } from './services/blockSignature';
 import { useEditorState } from './hooks/useEditorState';
 import { useProgressState } from './hooks/useProgressState';
-import { useSimulationClock, BASE_SIM_TICK_MS, type AppState } from './hooks/useSimulationClock';
+import { useSimulationClock, type AppState } from './hooks/useSimulationClock';
 import { useEditHistory } from './hooks/useEditHistory';
-import { saveProgress, saveVariants, saveHints, saveUiStyle, type PlacedBlock, type LevelVariantsMap } from './services/storage';
+import { saveHints, saveUiStyle, type PlacedBlock } from './services/storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sound } from './audio/sound';
 import {
@@ -14,24 +13,19 @@ import {
   type VariantSummary,
 } from './components/BottomDock';
 import { BriefingCard } from './components/BriefingCard';
-import { CampaignModal, type LevelProgressRecord } from './components/CampaignModal';
+import { CampaignModal } from './components/CampaignModal';
 import { GoalCard } from './components/GoalCard';
 import { HintsDrawer } from './components/HintsDrawer';
 import { MachineInspector } from './components/MachineInspector';
 import { OnboardingOverlay } from './components/OnboardingOverlay';
 import { OutcomeModal } from './components/OutcomeModal';
 import { TitleScreen } from './components/TitleScreen';
-import { TopHud, type UiStyleMode } from './components/TopHud';
+import { TopHud } from './components/TopHud';
 import {
-  MAX_SIMULATION_TICKS,
-  cloneWorld,
   computeWorldArea,
   createWorldFromLevel,
-  getBlockedPlacementInfo,
-  stepSimulation,
-  verifyLevelSolution,
 } from './engine/hex-engine';
-import { hexEqual, hexKey, rotateDir } from './engine/hex-math';
+import { hexEqual, rotateDir } from './engine/hex-math';
 import {
   ALL_PUZZLE_LEVELS,
   CAMPAIGN_LEVELS,
@@ -40,17 +34,13 @@ import {
 } from './engine/levels';
 import type {
   AxialCoord,
-  HexDir,
   LevelDefinition,
-  MachineConfig,
   MachineType,
-  RotatorMode,
   SimulationWorld,
   VerificationReport,
 } from './engine/types';
 import type { PaletteThemeId } from './render/celMaterials';
 import { HexScene3D } from './render/HexScene3D';
-import { TOKEN_TRIGGER_ALPHA } from './render/tokenAnimationTimeline';
 
 export default function App() {
   const autostart = useMemo(() => {
