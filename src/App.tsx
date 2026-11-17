@@ -1004,6 +1004,7 @@ export default function App() {
       {/* Isolated 3D WebGL Viewport */}
       <HexScene3D
         world={world}
+        events={world.events}
         theme={theme}
         isTitleMode={appState === 'title'}
         isSimPlaying={isSimPlaying}

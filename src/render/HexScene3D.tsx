@@ -1,3 +1,4 @@
+import { useSceneEvents } from './useSceneEvents';
 import { disposeObjectTree } from './disposeObjectTree';
 import { machineMeshSignature } from './machineMeshSignature';
 import { useEffect, useRef } from 'react';
@@ -84,6 +85,7 @@ import {
 
 export interface HexSceneProps {
   world: SimulationWorld;
+  events: SimEvent[];
   theme: PaletteThemeId;
   isTitleMode: boolean;
   isSimPlaying?: boolean;
@@ -170,6 +172,7 @@ function detectSoftwareGl(): boolean {
 
 export function HexScene3D({
   world,
+  events,
   theme,
   isTitleMode,
   isSimPlaying = false,
@@ -275,40 +278,7 @@ export function HexScene3D({
     sceneApiRef.current?.syncMachines();
   }, [machineSig]);
 
-  // Reactive 3D VFX bursts, pulse rings, floating operation badges, & camera micro-shake
-  const lastEventIdRef = useRef(0);
-  useEffect(() => {
-    if (world.tick === 0 || world.events.length === 0) {
-      lastEventIdRef.current = 0;
-      sceneApiRef.current?.clearPendingEventFx();
-      return;
-    }
-    const maxEvId = world.events[world.events.length - 1].id;
-    // Handle step-back / rewind safely
-    if (maxEvId < lastEventIdRef.current) {
-      lastEventIdRef.current = maxEvId;
-      sceneApiRef.current?.clearPendingEventFx();
-      return;
-    }
-    const newEvents = world.events.filter((ev) => ev.id > lastEventIdRef.current);
-    lastEventIdRef.current = maxEvId;
-    const isAnimatedPlayback =
-      (propsRef.current.isSimPlaying || propsRef.current.isTitleMode) &&
-      tickProgressRef.current < TOKEN_TRIGGER_ALPHA;
-
-    for (const ev of newEvents) {
-      const immediate =
-        ev.type === 'spawn' ||
-        ev.type === 'collision' ||
-        ev.type === 'error' ||
-        !isAnimatedPlayback;
-      if (immediate) {
-        sceneApiRef.current?.emitEventFx(ev);
-      } else {
-        sceneApiRef.current?.queueEventFx(ev);
-      }
-    }
-  }, [world.events, world.tick]);
+  useSceneEvents(events, world.tick, isSimPlaying, isTitleMode, tickProgressRef, sceneApiRef);
 
   useEffect(() => {
     if (world.tick === 0) {
