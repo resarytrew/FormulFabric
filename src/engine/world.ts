@@ -52,7 +52,7 @@ function cloneMachineConfig(config: MachineConfig | undefined | null): MachineCo
             : [],
           expectedValues: Array.isArray(pattern.expectedValues) ? [...pattern.expectedValues] : undefined,
           expectedNodeValues: Array.isArray(pattern.expectedNodeValues)
-            ? pattern.expectedNodeValues.map((row) => [...row])
+            ? pattern.expectedNodeValues.map((row) => Array.isArray(row) ? [...row] : [])
             : undefined,
           ladderStep: pattern.ladderStep ? { ...pattern.ladderStep } : undefined,
         }
