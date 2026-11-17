@@ -1882,3 +1882,25 @@ test('3D timeline & transport curves preserve domino cascading, jumper arc squas
 
 
 
+
+test('multi-cell sink footprints reject overlaps regardless of insertion order', () => {
+  const level: LevelDefinition = { id: 'footprints', index: 99, title: '', subtitle: '', tier: 'Начальный', radius: 3, availableTools: ['sink', 'conveyor'], requiredDeliveries: 1, presetMachines: [{ type: 'conveyor', coord: { q: 1, r: 0 }, locked: true, config: { dir: 0 } }], pedagogyNote: '', bonusGoalText: '' };
+  const sink = { type: 'sink' as const, coord: { q: 0, r: 0 }, config: { dir: 0 as const, targetPattern: { mode: 'exact' as const, nodes: [{ offset: { q: 0, r: 0 } }, { offset: { q: 1, r: 0 } }], edges: [], rotationInvariant: false, label: 'pair' } } };
+  const fixedOverlap = createWorldFromLevel(level, [sink]);
+  assert.equal(fixedOverlap.status, 'error');
+  assert.match(fixedOverlap.errorReason ?? '', /пересекает/);
+  assert.equal(fixedOverlap.machines.get('1,0')?.locked, true);
+  const empty = { ...level, presetMachines: [] };
+  const belt = { type: 'conveyor' as const, coord: { q: 1, r: 0 }, config: { dir: 0 as const } };
+  for (const blocks of [[sink, belt], [belt, sink]]) {
+    const world = createWorldFromLevel(empty, blocks);
+    assert.equal(world.status, 'error');
+    assert.match(world.errorReason ?? '', /пересекает/);
+    assert.equal(world.machines.size, 0);
+  }
+  const otherSink = { ...sink, coord: { q: 2, r: 0 }, config: { ...sink.config, targetPattern: { ...sink.config.targetPattern, nodes: [{ offset: { q: 0, r: 0 } }, { offset: { q: -1, r: 0 } }] } } };
+  for (const blocks of [[sink, otherSink], [otherSink, sink]]) {
+    assert.equal(createWorldFromLevel(empty, blocks).status, 'error');
+  }
+  assert.equal(createWorldFromLevel(empty, [sink]).status, 'idle');
+});

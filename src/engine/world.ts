@@ -154,6 +154,49 @@ export function validateLevelPlacement(
     counts[b.type] = (counts[b.type] ?? 0) + 1;
   }
 
+  // Validate every pad against the final set of machines, independently of
+  // insertion order. An unlocked preset at the same anchor may be replaced.
+  const validBlocks = blocks.filter(b => b && b.coord && b.config && Number.isInteger(b.coord.q) && Number.isInteger(b.coord.r));
+  const replacementKeys = new Set(validBlocks.map(b => hexKey(b.coord)));
+  const occupied = new Map<HexKey, string[]>();
+  const addOccupied = (key: HexKey, owner: string) => {
+    const owners = occupied.get(key) ?? [];
+    owners.push(owner);
+    occupied.set(key, owners);
+  };
+  for (const [key, machine] of baseWorld.machines) {
+    if (!machine.locked && replacementKeys.has(key)) continue;
+    addOccupied(key, `preset:${key}`);
+    if (machine.type === 'sink') {
+      for (const pad of getMachineFootprint(machine)) {
+        if (hexKey(pad) !== key) addOccupied(hexKey(pad), `preset:${key}`);
+      }
+    }
+  }
+  validBlocks.forEach((block, index) => {
+    addOccupied(hexKey(block.coord), `player:${index}`);
+  });
+  validBlocks.forEach((block, index) => {
+    if (block.type !== 'sink') return;
+    const own = `player:${index}`;
+    const pads = new Set<HexKey>();
+    for (const pad of getMachineFootprint(block)) {
+      const key = hexKey(pad);
+      if (pads.has(key)) {
+        errors.push(`Приёмник повторно использует гекс (${pad.q}, ${pad.r})`);
+        continue;
+      }
+      pads.add(key);
+      if (!baseWorld.platformHexes.has(key) || baseWorld.narrowGapHexes.has(key)) {
+        errors.push(`Площадка приёмника на (${pad.q}, ${pad.r}) находится вне доступной платформы`);
+      }
+      if ((occupied.get(key) ?? []).some(owner => owner !== own)) {
+        errors.push(`Площадка приёмника на (${pad.q}, ${pad.r}) пересекает другой механизм`);
+      }
+      if (key !== hexKey(block.coord)) addOccupied(key, own);
+    }
+  });
+
   if (level.maxTotalBlocks !== undefined && blocks.length > level.maxTotalBlocks) {
     errors.push(`Превышен общий лимит блоков: ${blocks.length} > ${level.maxTotalBlocks}`);
   }
