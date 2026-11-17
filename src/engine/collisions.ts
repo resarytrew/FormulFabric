@@ -1,10 +1,22 @@
 import type { ConnectedComponent } from './components';
+import { compareCoords, sortedTokens } from './deterministic-order';
 import { triggerError } from './events';
-import { hexEqual, hexKey, hexNeighbor, rotateAroundPivot } from './hex-math';
+import { pickBestIntent } from './intent-order';
+import { hexEqual, hexKey, hexNeighbor, parseHexKey, rotateAroundPivot } from './hex-math';
 import { getRotationSweptHexes } from './rotation';
 import { SOLID_MACHINE_TYPES } from './world';
 import type { ComponentIntent, ThrustTier } from './movement-types';
 import type { AxialCoord, HexKey, SimulationWorld } from './types';
+
+/** Пары «сфера → предложенная координата» в каноническом порядке сфер. */
+function orderedProposedEntries(
+  world: SimulationWorld,
+  proposedCoordByToken: Map<string, AxialCoord>,
+): Array<[string, AxialCoord]> {
+  return sortedTokens(world)
+    .filter((tok) => proposedCoordByToken.has(tok.id))
+    .map((tok) => [tok.id, proposedCoordByToken.get(tok.id)!] as [string, AxialCoord]);
+}
 
 export function resolveMovement(world: SimulationWorld, components: ConnectedComponent[], tokenToComponent: Map<string, ConnectedComponent>, intentsByComp: Map<string, ComponentIntent[]>): { resolvedIntentByComp: Map<string, ComponentIntent | null>; proposedCoordByToken: Map<string, AxialCoord>; rotationInfoByToken: Map<string, { pivot: AxialCoord; angleDelta: number } | undefined> } | null {
   // Phase 3: Conflict Checks (Tiered Thrust Conflicts, Bounds, Solid Housing, Swept-Arcs, Swaps, Overlaps)
@@ -33,15 +45,11 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
       );
       return null;
     }
-    let chosen = topIntents[0];
-    for (const cand of topIntents) {
-      const candIdx = cand.kind === 'move' ? (cand.pushChainIndex ?? 0) : 0;
-      const chosenIdx = chosen.kind === 'move' ? (chosen.pushChainIndex ?? 0) : 0;
-      if (candIdx < chosenIdx) {
-        chosen = cand;
-      }
-    }
-    resolvedIntentByComp.set(comp.id, chosen);
+    // Равнозначные кандидаты (одинаковый tier и signature) разрешаются полным
+    // детерминированным порядком: pushChainIndex, координата источника, тип
+    // механизма (см. compareIntents). Порядок массива намерений больше не
+    // влияет на выбор, поэтому Map-порядок механизмов не наблюдаем.
+    resolvedIntentByComp.set(comp.id, pickBestIntent(topIntents));
   }
 
   // Compute proposed coordinates for every token
@@ -82,6 +90,7 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
   }
 
   // Check Rotator Swept-Arc Obstacles (solid machine housings & non-component spheres on swept sector)
+  const orderedProposed = orderedProposedEntries(world, proposedCoordByToken);
   for (const comp of components) {
     const intent = resolvedIntentByComp.get(comp.id);
     if (!intent || intent.kind !== 'rotate') continue;
@@ -101,7 +110,7 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
           );
           return null;
         }
-        for (const [otherId, otherProposed] of proposedCoordByToken.entries()) {
+        for (const [otherId, otherProposed] of orderedProposed) {
           if (compSet.has(otherId)) continue;
           if (hexEqual(otherProposed, sweptHex)) {
             triggerError(
@@ -117,8 +126,11 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
     }
   }
 
-  // Check out-of-bounds and solid housings
-  for (const [id, targetCoord] of proposedCoordByToken.entries()) {
+  // Check out-of-bounds and solid housings.
+  // Порядок классов проверок не меняется (край → корпус → разлом → обмен →
+  // наложение); внутри класса сферы перебираются канонически, поэтому при двух
+  // независимых падениях/столкновениях в одном такте диагностика стабильна.
+  for (const [id, targetCoord] of orderedProposedEntries(world, proposedCoordByToken)) {
     const tok = world.tokens.get(id)!;
     const tKey = hexKey(targetCoord);
     if (!world.platformHexes.has(tKey)) {
@@ -183,7 +195,7 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
   }
 
   // Check edge swaps (token A moves oldA -> oldB while token B moves oldB -> oldA)
-  const tokenIds = Array.from(world.tokens.keys());
+  const tokenIds = sortedTokens(world).map((tok) => tok.id);
   for (let i = 0; i < tokenIds.length; i++) {
     for (let j = i + 1; j < tokenIds.length; j++) {
       const id1 = tokenIds[i];
@@ -217,18 +229,23 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
     }
   }
 
-  // Check target cell overlaps
+  // Check target cell overlaps.
+  // Конфликтные гексы перебираются по `q`, затем `r`, а сферы внутри гекса —
+  // в каноническом порядке: при нескольких независимых наложениях в одном такте
+  // сообщение и подсветка одинаковы при любом порядке хранения в Map.
   const tokensAtProposed = new Map<HexKey, string[]>();
-  for (const [id, coord] of proposedCoordByToken.entries()) {
+  for (const [id, coord] of orderedProposedEntries(world, proposedCoordByToken)) {
     const k = hexKey(coord);
     const arr = tokensAtProposed.get(k) ?? [];
     arr.push(id);
     tokensAtProposed.set(k, arr);
   }
 
-  for (const [tKey, ids] of tokensAtProposed.entries()) {
+  const conflictHexes = [...tokensAtProposed.keys()].map(parseHexKey).sort(compareCoords);
+  for (const conflictCoord of conflictHexes) {
+    const ids = tokensAtProposed.get(hexKey(conflictCoord))!;
     if (ids.length <= 1) continue;
-    const machine = world.machines.get(tKey);
+    const machine = world.machines.get(hexKey(conflictCoord));
     const validSimultaneousTwoInput =
       (machine?.type === 'adder' || machine?.type === 'scales') &&
       machine.state.memory === null &&

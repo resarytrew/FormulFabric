@@ -1,5 +1,6 @@
 import { checkVictory } from './victory';
 import { getConnectedComponents } from './components';
+import { sortedMachines, sortedTokens } from './deterministic-order';
 import { pushEvent, triggerError } from './events';
 import { hexEqual, hexKey, hexNeighbor, oppositeDir } from './hex-math';
 import { matchComponentToPattern } from './patterns';
@@ -77,8 +78,11 @@ export function finishSimulationTick(world: SimulationWorld, machineActionOccurr
   };
 
   const postComponents = getConnectedComponents(world);
+  // Порядок приёмников канонический (координата), чтобы при нескольких
+  // подходящих приёмниках и порядок доставок, и диагностика не зависели от Map.
+  const orderedMachines = sortedMachines(world);
   for (const comp of postComponents) {
-    for (const machine of world.machines.values()) {
+    for (const machine of orderedMachines) {
       if (machine.type !== 'sink' || !machine.config.targetPattern) continue;
       const pattern = machine.config.targetPattern;
       const sinkId = machine.config.sinkId ?? machine.id;
@@ -196,7 +200,7 @@ export function finishSimulationTick(world: SimulationWorld, machineActionOccurr
   // Deadlock check for waiting side-port queues: if machines are holding tokens on blocked altDir
   // while zero tokens moved/transformed, no non-waiting component has drive, and no spawner can emit
   if (world.status === 'running' && !machineActionOccurredThisTick && world.tokens.size > 0) {
-    const waitingMachines = Array.from(world.machines.values()).filter(
+    const waitingMachines = orderedMachines.filter(
       (m) => m.state.isWaitingSideExit,
     );
     if (waitingMachines.length > 0) {
@@ -231,7 +235,7 @@ export function finishSimulationTick(world: SimulationWorld, machineActionOccurr
     triggerError(
       world,
       `Цикл не завершился за отведённое время (${MAX_SIMULATION_TICKS} тактов) — проверьте условие выхода фильтра`,
-      Array.from(world.tokens.values()).map((t) => t.coord),
+      sortedTokens(world).map((t) => t.coord),
       'error',
     );
     return world;

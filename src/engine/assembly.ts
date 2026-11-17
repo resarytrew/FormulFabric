@@ -1,4 +1,5 @@
 import { getConnectedComponents, type ConnectedComponent } from './components';
+import { sortedMachines } from './deterministic-order';
 import { pushEvent, triggerError } from './events';
 import { hexDistance, hexEqual, hexKey, hexNeighbor } from './hex-math';
 import type { ConsumedTokenKind, HexKey, SimulationWorld, Token } from './types';
@@ -18,7 +19,9 @@ export function processAssembly(world: SimulationWorld, machineActionOccurredThi
     updatedHexMap.set(hexKey(t.coord), t);
   }
 
-  for (const machine of world.machines.values()) {
+  // Сварка и резка обходят механизмы в каноническом порядке: события weld/cut
+  // (и, значит, анимационные эффекты) не зависят от порядка хранения.
+  for (const machine of sortedMachines(world)) {
     if (machine.type === 'welder') {
       const tA = updatedHexMap.get(hexKey(machine.coord));
       const neighbor = hexNeighbor(machine.coord, machine.config.dir);
@@ -68,7 +71,7 @@ export function processAssembly(world: SimulationWorld, machineActionOccurredThi
     for (const id of c.tokenIds) compByTokenAfterMove.set(id, c);
   }
   const destroyedCompIds = new Set<string>();
-  for (const machine of world.machines.values()) {
+  for (const machine of sortedMachines(world)) {
     if (machine.type !== 'destroyer') continue;
     const victim = Array.from(world.tokens.values()).find((t) => hexEqual(t.coord, machine.coord));
     if (!victim) continue;

@@ -1,3 +1,4 @@
+import { sortedMachines } from './deterministic-order';
 import { pushEvent, triggerError } from './events';
 import { hexEqual, hexKey, hexNeighbor } from './hex-math';
 import { isInRange } from './operations';
@@ -5,8 +6,16 @@ import { SOLID_MACHINE_TYPES } from './world';
 import type { SimulationWorld, Token } from './types';
 
 export function activateSpawners(world: SimulationWorld, movedTokenIds: Set<string>): boolean {
-  // Activate Spawners (spawn onto neighbor hex if empty)
-  for (const machine of world.machines.values()) {
+  // Activate Spawners (spawn onto neighbor hex if empty).
+  //
+  // Источники обрабатываются в каноническом порядке координат, а не в порядке
+  // хранения в `Map`. Это и есть правило общего выхода: если два источника
+  // направлены на один гекс, первым считается источник с меньшей координатой
+  // `q` (при равенстве — с меньшей `r`); он и выпускает сферу. Второй источник
+  // видит гекс занятым и ждёт: `spawnIndex`, значение из последовательности и
+  // `cooldown`, накопленный до выпуска, не теряются — выпуск произойдёт в том
+  // такте, когда гекс освободится.
+  for (const machine of sortedMachines(world)) {
     if (machine.type !== 'spawner') continue;
     const seq = machine.config.sequence ?? [];
     if (seq.length === 0) continue;
