@@ -1,3 +1,4 @@
+import { useSimulationClock, BASE_SIM_TICK_MS, type AppState } from './hooks/useSimulationClock';
 import { useEditHistory } from './hooks/useEditHistory';
 import { loadSavedUiStyle, loadSavedProgress, saveProgress, loadSavedVariants, saveVariants, loadSavedHints, saveHints, saveUiStyle, type PlacedBlock, type LevelVariantsMap } from './services/storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -45,10 +46,6 @@ import type {
 import type { PaletteThemeId } from './render/celMaterials';
 import { HexScene3D } from './render/HexScene3D';
 import { TOKEN_TRIGGER_ALPHA } from './render/tokenAnimationTimeline';
-
-const BASE_SIM_TICK_MS = 1050;
-
-type AppState = 'title' | 'playing' | 'paused' | 'gameover';
 
 function getBlocksSignature(blocks: PlacedBlock[]): string {
   return blocks
@@ -420,70 +417,7 @@ export default function App() {
     }
   }, []);
 
-  // Title Screen ambient showcase loop & Playing Simulation Stepper
-  useEffect(() => {
-    if (appState === 'title') {
-      const intervalMs = BASE_SIM_TICK_MS;
-      let lastTickTime = performance.now();
-      let animId = 0;
-
-      const frame = (now: number) => {
-        const elapsed = now - lastTickTime;
-        tickProgressRef.current = Math.min(1, elapsed / intervalMs);
-        if (elapsed >= intervalMs) {
-          lastTickTime = now;
-          tickProgressRef.current = 0;
-          const prev = worldRef.current;
-          if (prev.status === 'victory' || prev.status === 'error' || prev.tick > 45) {
-            const fresh = createWorldFromLevel(
-              titleTourLevel,
-              titleTourLevel.demoSolution ?? [],
-            );
-            worldRef.current = fresh;
-            setWorld(fresh);
-          } else {
-            const nextClone = cloneWorld(prev);
-            stepSimulation(nextClone);
-            worldRef.current = nextClone;
-            setWorld(nextClone);
-          }
-        }
-        animId = requestAnimationFrame(frame);
-      };
-      animId = requestAnimationFrame(frame);
-      return () => cancelAnimationFrame(animId);
-    }
-
-    if (appState !== 'playing' || !isSimPlaying) {
-      tickProgressRef.current = 1;
-      return;
-    }
-
-    const intervalMs = BASE_SIM_TICK_MS / simSpeed;
-    let lastTickTime = performance.now();
-    let animId = 0;
-
-    const frame = (now: number) => {
-      const elapsed = now - lastTickTime;
-      tickProgressRef.current = Math.min(1, elapsed / intervalMs);
-
-      if (elapsed >= intervalMs) {
-        lastTickTime = now;
-        tickProgressRef.current = 0;
-        advanceSimulationTick(false);
-      }
-      animId = requestAnimationFrame(frame);
-    };
-
-    animId = requestAnimationFrame(frame);
-    return () => {
-      cancelAnimationFrame(animId);
-      if (pendingSoundTimerRef.current !== null) {
-        window.clearTimeout(pendingSoundTimerRef.current);
-        pendingSoundTimerRef.current = null;
-      }
-    };
-  }, [appState, isSimPlaying, simSpeed, titleTourLevel, advanceSimulationTick]);
+  useSimulationClock({ appState, isSimPlaying, simSpeed, titleTourLevel, advanceSimulationTick, tickProgressRef, worldRef, pendingSoundTimerRef, setWorld });
 
   const handleStepOnce = useCallback(() => {
     if (isSimPlaying) return;
