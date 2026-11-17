@@ -1,3 +1,4 @@
+import { machineMeshSignature } from './machineMeshSignature';
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -288,12 +289,7 @@ export function HexScene3D({
   }, [theme]);
 
   // Sync machines whenever machine map, config, or memory changes
-  const machineSig = Array.from(world.machines.values())
-    .map(
-      (m) =>
-        `${m.id}:${m.type}:${m.coord.q},${m.coord.r}:${m.config.dir}:${m.config.altDir ?? ''}:${m.config.rotMode ?? ''}:${m.config.filterRule ?? ''}:${m.config.divisor ?? ''}:${m.config.spawnInterval ?? ''}:${m.config.loopSequence ? 1 : 0}:${m.config.sequence?.join(',') ?? ''}:${m.state.memory ?? ''}`,
-    )
-    .join('|');
+  const machineSig = JSON.stringify(Array.from(world.machines.values(), m => machineMeshSignature(m, world.machines, theme)));
   useEffect(() => {
     sceneApiRef.current?.syncMachines();
   }, [machineSig]);
@@ -460,6 +456,8 @@ export function HexScene3D({
     const sceneryGroup = new THREE.Group();
     const channelGroup = new THREE.Group();
     const machineGroup = new THREE.Group();
+    const machineDecorationGroup = new THREE.Group();
+    machineGroup.add(machineDecorationGroup);
     const tokenGroup = new THREE.Group();
     const bondGroup = new THREE.Group();
     const fxGroup = new THREE.Group();
@@ -854,6 +852,7 @@ export function HexScene3D({
     // Interactable hit meshes for fast raycasting
     let interactableHexes: THREE.Mesh[] = [];
     const machineMeshes = new Map<HexKey, THREE.Group>();
+    const machineMeshSignatures = new Map<HexKey, string>();
     const prevMachineIds = new Map<HexKey, string>();
     const machineDropAge = new Map<HexKey, number>();
     const tokenVisuals = new Map<
@@ -1384,10 +1383,17 @@ export function HexScene3D({
     }
 
     function syncMachines() {
-      clearGroup(machineGroup);
+      clearGroup(machineDecorationGroup);
       clearGroup(channelGroup);
       activeChannelMat = null;
-      machineMeshes.clear();
+      for (const [key, mesh] of machineMeshes) {
+        if (!propsRef.current.world.machines.has(key)) {
+          machineGroup.remove(mesh);
+          disposeObjectTree(mesh);
+          machineMeshes.delete(key);
+          machineMeshSignatures.delete(key);
+        }
+      }
       const pal = PALETTES[propsRef.current.theme];
       const nextIds = new Map<HexKey, string>();
 
@@ -1403,11 +1409,20 @@ export function HexScene3D({
         if (prevMachineIds.size > 0 && prevMachineIds.get(k) !== sig) {
           machineDropAge.set(k, 0);
         }
-        const mesh = buildMachineMesh(machine, pal, maxAniso, propsRef.current.world.machines);
-        const w = hexToWorld(machine.coord);
-        mesh.position.set(w.x, 0, w.z);
-        machineGroup.add(mesh);
-        machineMeshes.set(k, mesh);
+        const meshSig = machineMeshSignature(machine, propsRef.current.world.machines, propsRef.current.theme);
+        if (machineMeshSignatures.get(k) !== meshSig) {
+          const previous = machineMeshes.get(k);
+          if (previous) {
+            machineGroup.remove(previous);
+            disposeObjectTree(previous);
+          }
+          const mesh = buildMachineMesh(machine, pal, maxAniso, propsRef.current.world.machines);
+          const w = hexToWorld(machine.coord);
+          mesh.position.set(w.x, 0, w.z);
+          machineGroup.add(mesh);
+          machineMeshes.set(k, mesh);
+          machineMeshSignatures.set(k, meshSig);
+        }
 
         if (machine.type === 'spawner' || machine.type === 'sink') {
           hasIoSocket = true;
@@ -1424,7 +1439,7 @@ export function HexScene3D({
             });
             const sock = new THREE.Mesh(socketRingGeo, sockMat);
             sock.position.set(pw.x, 0.006, pw.z);
-            machineGroup.add(sock);
+            machineDecorationGroup.add(sock);
           }
         }
       }
@@ -1434,7 +1449,7 @@ export function HexScene3D({
 
       // Seamless conveyor track junction couplers
       const connectors = buildConveyorConnectorGroup(propsRef.current.world.machines, pal);
-      machineGroup.add(connectors);
+      machineDecorationGroup.add(connectors);
 
       // Inlaid luminous pathway channels connecting adjacent flows
       const inlaid = buildInlaidChannelGroup(
