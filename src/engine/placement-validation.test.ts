@@ -706,3 +706,54 @@ test('unplaceable saved records are listed and removable', () => {
   // The duplicated record is also a reported conflict for the level.
   assert.ok(findLayoutConflictsForLevel(level, stored).some((c) => c.includes('Дублирующий')));
 });
+
+
+test('corrupted expected node rows cannot crash an editable error world', () => {
+  const level = emptyLevel({ availableTools: ['sink'] });
+  const brokenPattern = {
+    ...TWO_NODE_PATTERN,
+    expectedNodeValues: [null],
+  } as unknown as TargetPattern;
+  const blocks = [{
+    type: 'sink' as const,
+    coord: { q: 0, r: 0 },
+    config: { dir: 0 as const, sinkId: 'damaged', targetPattern: brokenPattern },
+  }];
+  const before = JSON.stringify(blocks);
+
+  assert.ok(validateLevelPlacement(level, blocks).some((error) => error.includes('полимер')));
+  assert.doesNotThrow(() => createEditableWorldFromLevel(level, blocks));
+  const world = createEditableWorldFromLevel(level, blocks);
+  assert.equal(world.status, 'error');
+  assert.equal(world.machines.get('0,0')?.type, 'sink');
+  assert.equal(JSON.stringify(blocks), before, 'preview does not alter the saved layout');
+});
+
+test('invalid axial coordinates are listed as removable saved records', () => {
+  const level = emptyLevel({ availableTools: ['conveyor'] });
+  const good = { type: 'conveyor' as const, coord: { q: 0, r: 0 }, config: { dir: 0 as const } };
+  const invalid = [
+    { q: null, r: 0 },
+    { q: '1', r: 0 },
+    { q: 0.5, r: 0 },
+  ];
+  const stored = [
+    good,
+    ...invalid.map((coord) => ({
+      type: 'conveyor' as const,
+      coord: coord as unknown as { q: number; r: number },
+      config: { dir: 0 as const },
+    })),
+  ];
+
+  const unplaceable = findUnplaceableBlocks(stored);
+  assert.deepEqual(unplaceable.map((block) => block.index), [1, 2, 3]);
+  assert.ok(unplaceable.every((block) => block.reason.includes('координаты')));
+  assert.ok(findLayoutConflictsForLevel(level, stored).some((message) =>
+    message.includes('координаты'),
+  ));
+
+  const repaired = removeUnplaceableBlocks(stored, unplaceable);
+  assert.deepEqual(repaired, [good]);
+  assert.deepEqual(validateLevelPlacement(level, repaired), []);
+});
