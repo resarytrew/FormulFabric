@@ -209,7 +209,7 @@ AUDIT_STRICT=1 npm test       # аудит в режиме «требовать 
 
 | Прогон | Результат |
 | --- | --- |
-| `npm test` | **210 / 210** (было 194; +16: 5 в новом `intent-order.test.ts`, 3 в `movement-collisions.test.ts`, 8 в `movement-determinism.test.ts`) |
+| `npm test` | **210 / 210** (было 194; +16: 5 в новом `intent-order.test.ts`, 2 в `movement-collisions.test.ts`, 9 в `movement-determinism.test.ts`; шесть характеризующих тестов заменены этими проверками) |
 | `npm run lint` (`tsc --noEmit`) | 0 ошибок |
 | `npm run build` (`vite build`) | успешно |
 | `AUDIT_STRICT=1 npm test` | 207 / 210: падают **только** три характеризующих дефекта вращения (задача #4D) |
