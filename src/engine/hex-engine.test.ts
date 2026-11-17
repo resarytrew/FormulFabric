@@ -782,6 +782,19 @@ test('solution verification rejects forbidden and over-budget placements', () =>
   const invalidWorld = createWorldFromLevel(level, invalidDirection);
   assert.equal(invalidWorld.status, 'error');
   assert.match(invalidWorld.errorReason ?? '', /направление/);
+  const duplicates = [allowed[0], { ...allowed[0] }];
+  const outside = [{ ...allowed[0], coord: { q: 100, r: 100 } }];
+  const zeroQuota = { ...level, partLimits: { [allowed[0].type]: 0 } };
+  for (const [target, blocks, message] of [
+    [level, duplicates, /Дублирующая/],
+    [level, outside, /вне платформы/],
+    [zeroQuota, allowed, /лимит/],
+  ] as const) {
+    const world = createWorldFromLevel(target, blocks);
+    assert.equal(world.status, 'error');
+    assert.match(world.errorReason ?? '', message);
+    assert.equal(verifyLevelSolution(target, blocks).passed, 0);
+  }
 });
 
 test('live simulation halts infinite feedback loop at MAX_SIMULATION_TICKS with diagnostic message', () => {
