@@ -1,4 +1,5 @@
 import { hexKey } from './hex-math';
+import { isValidCoord } from './placement-validation';
 import { validateLevelPlacement, validateLevelPlacementIssues } from './world';
 import type { LevelDefinition, MachineConfig, MachineType } from './types';
 import type { PlacementIssue } from './placement-validation';
@@ -32,10 +33,10 @@ function findLayoutConflictIssues(blocks: StoredBlock[]): PlacementIssue[] {
   const issues: PlacementIssue[] = [];
   const seen = new Set<string>();
   (blocks ?? []).forEach((b, index) => {
-    if (!b || !b.coord) {
+    if (!b || !isValidCoord(b.coord)) {
       issues.push({
         code: 'invalid-data',
-        message: 'Запись механизма без координат',
+        message: b?.coord ? 'Некорректные координаты механизма' : 'Запись механизма без координат',
         coords: [],
         machineIndex: index,
       });
@@ -66,10 +67,10 @@ export function findUnplaceableBlocks(blocks: StoredBlock[]): UnplaceableBlock[]
   const seen = new Set<string>();
   const unplaceable: UnplaceableBlock[] = [];
   (blocks ?? []).forEach((b, index) => {
-    if (!b || !b.coord) {
+    if (!b || !isValidCoord(b.coord)) {
       unplaceable.push({
         index,
-        reason: 'механизм без координат',
+        reason: b?.coord ? 'некорректные координаты' : 'механизм без координат',
         type: (b?.type ?? 'conveyor') as MachineType,
       });
       return;
