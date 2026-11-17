@@ -177,6 +177,12 @@ export interface SimulationWorld {
   visitedHexes: Set<HexKey>;
   errorHighlightHexes: AxialCoord[];
   errorReason: string | null;
+  /**
+   * Structured placement problems of an editable layout (see
+   * `validateLevelPlacementIssues`). Present on error worlds built from an
+   * invalid layout so the editor can list and repair them.
+   */
+  placementIssues?: import('./placement-validation').PlacementIssue[];
   fallingTokens?: Array<{ value: number; fromCoord: AxialCoord; toCoord: AxialCoord }>;
   /** Tokens consumed on this tick (delivered, stored, shredded, merged) so 3D view animates arrival -> pause -> absorb */
   consumedTokens?: ConsumedTokenVisual[];

@@ -23,7 +23,9 @@ import { TitleScreen } from './components/TitleScreen';
 import { TopHud } from './components/TopHud';
 import {
   computeWorldArea,
+  createEditableWorldFromLevel,
   createWorldFromLevel,
+  findUnplaceableBlocks,
 } from './engine/hex-engine';
 import { hexEqual, rotateDir } from './engine/hex-math';
 import {
@@ -149,7 +151,9 @@ export default function App() {
       setTickHistoryCount(0);
       setVictoryReport(null);
       setFailedVerificationReport(null);
-      const fresh = createWorldFromLevel(lvl, blocks);
+      // Keep the player's layout visible even when it is invalid: the world is
+      // marked as an error world, which blocks the simulation until it is fixed.
+      const fresh = createEditableWorldFromLevel(lvl, blocks);
       worldRef.current = fresh;
       setWorld(fresh);
       setIsSimPlaying(false);
@@ -338,7 +342,11 @@ export default function App() {
 
       if (e.code === 'Space') {
         e.preventDefault();
-        if (worldRef.current.status === 'victory' || worldRef.current.status === 'error') {
+        if (worldRef.current.status === 'error') {
+          showBudgetWarning(
+            worldRef.current.errorReason ?? 'Исправьте конфликты схемы перед запуском симуляции.',
+          );
+        } else if (worldRef.current.status === 'victory') {
           handleResetSim();
         } else {
           setIsSimPlaying((p) => !p);
@@ -439,6 +447,21 @@ export default function App() {
 
   const areaMetric = useMemo(() => computeWorldArea(world), [world]);
 
+  // Records a saved layout may contain that the scene cannot draw (no
+  // coordinates, duplicate hex). They are listed with an explicit remove action
+  // so a damaged save can always be repaired from the UI.
+  const unplaceableBlocks = useMemo(
+    () => findUnplaceableBlocks(playerBlocks),
+    [playerBlocks],
+  );
+
+  const handleRemoveUnplaceable = useCallback(
+    (index: number) => {
+      commitBlocks(playerBlocks.filter((_, i) => i !== index), true);
+    },
+    [playerBlocks, commitBlocks],
+  );
+
   const toolCounts = useMemo(() => {
     const counts: Partial<Record<MachineType, number>> = {};
     for (const b of playerBlocks) {
@@ -522,7 +545,14 @@ export default function App() {
             muted={muted}
             continuousCamera={continuousCamera}
             onTogglePlay={() => {
-              if (world.status === 'victory' || world.status === 'error') {
+              if (world.status === 'error') {
+                // An invalid layout cannot be simulated; explain it instead.
+                showBudgetWarning(
+                  world.errorReason ?? 'Исправьте конфликты схемы перед запуском симуляции.',
+                );
+                return;
+              }
+              if (world.status === 'victory') {
                 handleResetSim();
               } else {
                 setIsSimPlaying((p) => !p);
@@ -566,6 +596,35 @@ export default function App() {
               className="fixed top-20 left-1/2 -translate-x-1/2 z-30 hud-panel rounded-xl px-4 py-2 bg-[#fffbeb] dark:bg-amber-950/95 text-xs font-bold text-[#92400e] dark:text-amber-200 dark:border-amber-400/50 max-w-md text-center"
             >
               {budgetWarning}
+            </div>
+          )}
+
+          {/* Unplaceable saved blocks: they exist in the data but cannot be
+              drawn, so they are listed with an explicit remove action. */}
+          {appState === 'playing' && unplaceableBlocks.length > 0 && (
+            <div
+              role="status"
+              className="fixed top-32 left-1/2 -translate-x-1/2 z-30 hud-panel rounded-xl px-4 py-3 bg-[#fef2f2] dark:bg-rose-950/95 text-xs font-bold text-[#991b1b] dark:text-rose-200 dark:border-rose-400/50 max-w-md"
+            >
+              <div className="mb-2">
+                Повреждённые объекты в сохранённой схеме ({unplaceableBlocks.length})
+              </div>
+              <ul className="space-y-1 font-normal">
+                {unplaceableBlocks.slice(0, 3).map((item) => (
+                  <li key={item.index} className="flex items-center justify-between gap-2">
+                    <span>
+                      {item.type} — {item.reason}
+                    </span>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded border border-rose-400/60 px-2 py-0.5 font-bold hover:bg-rose-200/40"
+                      onClick={() => handleRemoveUnplaceable(item.index)}
+                    >
+                      Удалить
+                    </button>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
 

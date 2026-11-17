@@ -1,6 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction, type RefObject } from 'react';
 import { sound } from '../audio/sound';
-import { createWorldFromLevel, getBlockedPlacementInfo } from '../engine/hex-engine';
+import { findLayoutConflictsForLevel, getBlockedPlacementInfo, validateLevelPlacement } from '../engine/hex-engine';
 import { hexEqual, hexKey, rotateDir } from '../engine/hex-math';
 import { TOOL_METADATA } from '../engine/levels';
 import type { AxialCoord, HexDir, LevelDefinition, MachineConfig, MachineType, RotatorMode, SimulationWorld } from '../engine/types';
@@ -9,21 +9,20 @@ import { getBlocksSignature } from '../services/blockSignature';
 import { saveVariants, type LevelVariantsMap, type PlacedBlock } from '../services/storage';
 import type { AppState } from './useSimulationClock';
 
-function sanitizeBlocksForLevel(lvl: LevelDefinition, blocks: PlacedBlock[]): PlacedBlock[] {
-  const baseWorld = createWorldFromLevel(lvl, []);
-  const seen = new Set<string>();
-  return blocks
-    .filter((b) => {
-      const k = hexKey(b.coord);
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return !getBlockedPlacementInfo(baseWorld, b.coord).blocked;
-    })
-    .map((b) => ({
-      type: b.type,
-      coord: { ...b.coord },
-      config: structuredClone(b.config),
-    }));
+/**
+ * True when an edit makes the layout *worse*: it must not be applied if it adds
+ * a placement error that the previous layout did not already have. Comparing
+ * against the previous state keeps an already-conflicted layout editable, so the
+ * player can still repair it (deleting or moving the offending block).
+ */
+function introducesNewPlacementErrors(
+  lvl: LevelDefinition,
+  before: PlacedBlock[],
+  after: PlacedBlock[],
+): string | null {
+  const beforeErrors = new Set(validateLevelPlacement(lvl, before));
+  const added = validateLevelPlacement(lvl, after).filter((e) => !beforeErrors.has(e));
+  return added.length > 0 ? added[0] : null;
 }
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
@@ -44,10 +43,22 @@ export function useEditorActions({ isSimPlaying, appState, inspectedCoord, selec
       const nextBlocks = playerBlocksRef.current.map((b, i) =>
         i === idx ? { ...b, config: { ...b.config, ...patch } } : b,
       );
+      // A receiver's pattern decides its whole footprint, so a config edit can
+      // invalidate the layout just like a move does.
+      const newError = introducesNewPlacementErrors(
+        currentLevelRef.current,
+        playerBlocksRef.current,
+        nextBlocks,
+      );
+      if (newError) {
+        sound.playError();
+        showBudgetWarning(newError);
+        return;
+      }
       sound.playRotate();
       commitBlocks(nextBlocks, true);
     },
-    [isSimPlaying, commitBlocks],
+    [isSimPlaying, commitBlocks, currentLevelRef, playerBlocksRef, showBudgetWarning],
   );
 
   const handleDeleteBlock = useCallback(
@@ -118,15 +129,30 @@ export function useEditorActions({ isSimPlaying, appState, inspectedCoord, selec
       saveVariants(nextVariants);
       setVariantsMap(nextVariants);
 
-      const targetBlocks = lvlVars[slot]?.blocks
-        ? sanitizeBlocksForLevel(currentLevelRef.current, lvlVars[slot]!.blocks)
-        : [];
+      const storedBlocks = lvlVars[slot]?.blocks ?? [];
+      // Load the layout exactly as saved: never drop a block silently, not even
+      // a corrupted one — it stays on the board and is reported as a conflict.
+      const targetBlocks: PlacedBlock[] = storedBlocks.map((b) => ({
+        type: b?.type,
+        coord: { ...b?.coord },
+        config: structuredClone(b?.config),
+      }));
+      const conflicts = findLayoutConflictsForLevel(currentLevelRef.current, targetBlocks);
       setActiveVariant(slot);
       setInspectedCoord(null);
       commitBlocks(targetBlocks, true);
-      sound.playStep();
+      if (conflicts.length > 0) {
+        // The saved data is untouched; the player can delete the offending
+        // block or switch back and nothing was lost behind their back.
+        sound.playError();
+        showBudgetWarning(
+          `Сохранённая схема содержит конфликты (${conflicts.length}): ${conflicts[0]}`,
+        );
+      } else {
+        sound.playStep();
+      }
     },
-    [isSimPlaying, activeVariant, variantsMap, commitBlocks],
+    [isSimPlaying, activeVariant, variantsMap, commitBlocks, showBudgetWarning],
   );
 
   const handleHexClick = useCallback(
@@ -134,7 +160,9 @@ export function useEditorActions({ isSimPlaying, appState, inspectedCoord, selec
       if (appState !== 'playing' || isSimPlaying) return;
       const key = hexKey(coord);
       if (selectedTool !== 'select' && selectedTool !== 'erase') {
-        const blockCheck = getBlockedPlacementInfo(worldRef.current, coord);
+        const blockCheck = getBlockedPlacementInfo(worldRef.current, coord, {
+          allowedOwnerId: worldRef.current.machines.get(key)?.id,
+        });
         if (blockCheck.blocked) {
           sound.playError();
           if (blockCheck.reason) {
@@ -247,6 +275,14 @@ export function useEditorActions({ isSimPlaying, appState, inspectedCoord, selec
         };
         const filtered = playerBlocks.filter((b) => !hexEqual(b.coord, coord));
         nextBlocks = [...filtered, { type: selectedTool, coord: { ...coord }, config: newConfig }];
+        // A freshly placed receiver claims its whole footprint: refuse the drop
+        // if any of those cells is already taken by another machine.
+        const newError = introducesNewPlacementErrors(lvl, playerBlocks, nextBlocks);
+        if (newError) {
+          sound.playError();
+          showBudgetWarning(newError);
+          return;
+        }
         setInspectedCoord({ ...coord });
         setBudgetWarning(null);
         sound.playPlace();
@@ -281,7 +317,12 @@ export function useEditorActions({ isSimPlaying, appState, inspectedCoord, selec
   const handleMoveBlock = useCallback(
     (fromCoord: AxialCoord, toCoord: AxialCoord, newDir?: HexDir) => {
       if (appState !== 'playing' || isSimPlaying) return;
-      const blockCheck = getBlockedPlacementInfo(worldRef.current, toCoord);
+      const movingMachine = worldRef.current.machines.get(hexKey(fromCoord));
+      const blockCheck = getBlockedPlacementInfo(worldRef.current, toCoord, {
+        // A receiver being dragged out of its own footprint may land on one of
+        // its own pads (the pads move with it); nothing else may.
+        allowedOwnerId: movingMachine?.type === 'sink' ? movingMachine.id : undefined,
+      });
       if (blockCheck.blocked) {
         sound.playError();
         showBudgetWarning(blockCheck.reason ?? 'Целевой гекс недоступен для размещения.');
@@ -327,12 +368,21 @@ export function useEditorActions({ isSimPlaying, appState, inspectedCoord, selec
         nextBlocks = blocks.map((b, i) => (i === fromIdx ? updatedMoving : b));
       }
 
+      // The whole new layout must be legal, not just the destination hex: moving
+      // a receiver also moves every pad it occupies.
+      const newError = introducesNewPlacementErrors(currentLevelRef.current, blocks, nextBlocks);
+      if (newError) {
+        sound.playError();
+        showBudgetWarning(newError);
+        return;
+      }
+
       setInspectedCoord({ ...toCoord });
       setBudgetWarning(null);
       sound.playPlace();
       commitBlocks(nextBlocks, true);
     },
-    [appState, isSimPlaying, commitBlocks, showBudgetWarning],
+    [appState, isSimPlaying, commitBlocks, showBudgetWarning, currentLevelRef, worldRef, playerBlocksRef],
   );
 
   const handleApplyDemo = useCallback(

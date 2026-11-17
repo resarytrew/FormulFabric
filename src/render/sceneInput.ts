@@ -154,11 +154,16 @@ export function createSceneInput(renderer: THREE.WebGLRenderer, camera: THREE.Pe
           const wSnap = propsRef.current.world;
           const dKey = hexKey(dropCoord);
           const destMachine = wSnap.machines.get(dKey);
+          // A receiver may be repositioned onto one of its own pads; any other
+          // machine (or receiver) still may not claim a pad that is not its own.
+          const padOwnerId = wSnap.sinkFootprintHexes.get(dKey);
+          const isOwnPad = Boolean(padOwnerId) && padOwnerId === active.machine.id;
           const isBlockedDrop =
             !wSnap.platformHexes.has(dKey) ||
             wSnap.narrowGapHexes.has(dKey) ||
-            wSnap.sinkFootprintHexes.has(dKey) ||
-            Boolean(destMachine?.locked);
+            (Boolean(padOwnerId) && !isOwnPad) ||
+            // Only unlocked presets can be replaced, and only from their centre.
+            Boolean(destMachine && destMachine.locked && !hexEqual(dropCoord, active.fromCoord));
           const validDrop =
             !isBlockedDrop &&
             (!hexEqual(dropCoord, active.fromCoord) ||

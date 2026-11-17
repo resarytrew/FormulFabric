@@ -9,7 +9,35 @@ export { getConnectedComponents, type ConnectedComponent } from './components';
 export { getRotationSweptHexes } from './rotation';
 export { matchComponentToPattern } from './patterns';
 import { validateLevelPlacement, createWorldFromLevel } from './world';
-export { SOLID_MACHINE_TYPES, createMachineInstance, getMachineFootprint, getBlockedPlacementInfo, validateLevelPlacement, createWorldFromLevel } from './world';
+export { SOLID_MACHINE_TYPES, createMachineInstance, getMachineFootprint, getMachineOccupiedHexes, getBlockedPlacementInfo, validateLevelPlacement, validateLevelPlacementIssues, createEditableWorldFromLevel, createWorldFromLevel } from './world';
+export {
+  checkFootprintOverlapIssues,
+  checkFootprintOverlaps,
+  checkFootprintPlacement,
+  checkFootprintPlacementIssues,
+  issue,
+  issueCoords,
+  issueMessages,
+  lintPattern,
+  getMachineConfig,
+  isValidCoord,
+  resolveFinalPlacement,
+  validateLevelFootprintIssues,
+  validateLevelFootprints,
+  type FinalMachine,
+  type PlacedMachine,
+  type PlacementIssue,
+  type PlacementIssueCode,
+} from './placement-validation';
+export {
+  findLayoutConflicts,
+  findLayoutConflictsForLevel,
+  findLayoutIssuesForLevel,
+  findUnplaceableBlocks,
+  removeUnplaceableBlocks,
+  type StoredBlock,
+  type UnplaceableBlock,
+} from './layout-conflicts';
 export { MIN_INT_VALUE, MAX_INT_VALUE, evaluateFilterRule, isInRange, getExactDiv2, getExactSqrt, euclideanDivMod } from './operations';
 import { hexKey } from './hex-math';
 import type {
