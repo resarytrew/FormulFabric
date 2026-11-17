@@ -1,3 +1,4 @@
+import { useEditorState } from './hooks/useEditorState';
 import { useProgressState } from './hooks/useProgressState';
 import { useSimulationClock, BASE_SIM_TICK_MS, type AppState } from './hooks/useSimulationClock';
 import { useEditHistory } from './hooks/useEditHistory';
@@ -86,9 +87,8 @@ export default function App() {
   const { uiStyle, setUiStyle, progress, setProgress, variantsMap, setVariantsMap, hintsRevealedByLevel, setHintsRevealedByLevel } = useProgressState();
   const [activeVariant, setActiveVariant] = useState<VariantSlotId>('A');
   const [currentLevelId, setCurrentLevelId] = useState<string>('lvl-01');
-  const [playerBlocks, setPlayerBlocks] = useState<PlacedBlock[]>([]);
+  const { playerBlocks, setPlayerBlocks, playerBlocksRef, inspectedCoord, setInspectedCoord, selectedTool, setSelectedTool, selectedDir, setSelectedDir, rotatorMode, setRotatorMode, sandboxSeqInput, setSandboxSeqInput } = useEditorState();
   const { canUndo, canRedo, record: recordEdit, clear: clearEditHistory, undo, redo } = useEditHistory();
-  const [inspectedCoord, setInspectedCoord] = useState<AxialCoord | null>(null);
   const [victoryReport, setVictoryReport] = useState<VerificationReport | null>(null);
   const [failedVerificationReport, setFailedVerificationReport] =
     useState<VerificationReport | null>(null);
@@ -104,12 +104,6 @@ export default function App() {
 
   const [isSimPlaying, setIsSimPlaying] = useState<boolean>(false);
   const [simSpeed, setSimSpeed] = useState<1 | 2 | 4>(1);
-  const [selectedTool, setSelectedTool] = useState<
-    MachineType | 'erase' | 'select' | null
-  >('conveyor');
-  const [selectedDir, setSelectedDir] = useState<HexDir>(0);
-  const [rotatorMode, setRotatorMode] = useState<RotatorMode>('cw');
-  const [sandboxSeqInput, setSandboxSeqInput] = useState<string>('1, 2, 3, 4');
   const [dockCollapsed, setDockCollapsed] = useState<boolean>(false);
   const [briefingExpanded, setBriefingExpanded] = useState<boolean>(false);
   const [levelsModalOpen, setLevelsModalOpen] = useState<boolean>(false);
@@ -145,8 +139,6 @@ export default function App() {
 
   const currentLevelRef = useRef(currentLevel);
   currentLevelRef.current = currentLevel;
-  const playerBlocksRef = useRef(playerBlocks);
-  playerBlocksRef.current = playerBlocks;
   const activeVariantRef = useRef(activeVariant);
   activeVariantRef.current = activeVariant;
 
