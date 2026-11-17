@@ -6,6 +6,8 @@ import type {
   MachineType,
 } from './types';
 import { MIN_INT_VALUE, MAX_INT_VALUE } from './operations';
+import { isValidCoord, resolveFinalPlacement } from './placement-validation';
+import type { FootprintMachine } from './placement-validation';
 
 /**
  * Expected scalar/polymer deliveries for a verification stream, exactly as
@@ -20,6 +22,7 @@ export interface VerificationExpectations {
 type SinkCarrier = {
   type: MachineType | string;
   config?: MachineConfig | null;
+  coord?: { q: number; r: number };
 };
 
 interface SinkRef {
@@ -48,11 +51,21 @@ function collectSinks(
     if (typeof id !== 'string' || id.trim().length === 0) return;
     sinks.push({ id, pattern: config.targetPattern });
   };
-  for (const machine of level?.presetMachines ?? []) collect(machine);
-  for (const block of blocks ?? []) collect(block);
+
+  if (level) {
+    // Validate exactly the arrangement that createWorldFromLevel constructs.
+    // An unlocked preset replaced at its centre must not count as a second sink.
+    const validBlocks = (blocks ?? []).filter(
+      (block): block is FootprintMachine =>
+        Boolean(block && isValidCoord(block.coord) && block.config && typeof block.config === 'object'),
+    );
+    const final = resolveFinalPlacement(level, validBlocks, undefined, new Set(), { dropConflicts: false });
+    for (const machine of final) collect(machine);
+  } else {
+    for (const block of blocks ?? []) collect(block);
+  }
   return sinks;
 }
-
 /**
  * Non-throwing compatibility check of one expectation bundle, suitable for
  * surfacing through the verification report. Rules:
