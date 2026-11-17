@@ -31,6 +31,8 @@ import type { AxialCoord, LevelDefinition, MachineType, SimulationWorld } from '
 
 interface RunOutcome {
   states: string[];
+  /** Идентификаторы новых сфер по координатам — тоже обязаны совпадать. */
+  ids: string[];
   finalStatus: string;
   finalTick: number;
 }
@@ -38,18 +40,21 @@ interface RunOutcome {
 /** Прогоняет мир до терминального состояния, складывая канонический снимок каждого такта. */
 function runAndRecord(world: SimulationWorld, maxTicks = 180): RunOutcome {
   const states: string[] = [snapshotPhysicalState(world)];
+  const ids: string[] = [snapshotTokenIdsByCoord(world)];
   for (let tick = 0; tick < maxTicks; tick++) {
     if (world.status === 'victory' || world.status === 'error') break;
     stepSimulation(world);
     states.push(snapshotPhysicalState(world));
+    ids.push(snapshotTokenIdsByCoord(world));
   }
-  return { states, finalStatus: world.status, finalTick: world.tick };
+  return { states, ids, finalStatus: world.status, finalTick: world.tick };
 }
 
 function assertSameRun(forward: RunOutcome, reverse: RunOutcome, label: string): void {
   assert.equal(reverse.states.length, forward.states.length, `${label}: разная длина прогона`);
   for (let i = 0; i < forward.states.length; i++) {
     assert.equal(reverse.states[i], forward.states[i], `${label}: состояние разошлось на такте ${i}`);
+    assert.equal(reverse.ids[i], forward.ids[i], `${label}: идентификаторы сфер разошлись на такте ${i}`);
   }
   assert.equal(reverse.finalStatus, forward.finalStatus, `${label}: разный итог уровня`);
   assert.equal(reverse.finalTick, forward.finalTick, `${label}: разное число тактов`);
@@ -366,23 +371,80 @@ test('ids: transformer outputs are numbered in canonical order within one tick, 
   assertMatchesRule(transformLog(forward), transformLog(reversed), 'порядок событий преобразований стабилен');
 });
 
-test('[P2] adder merge keeps a different surviving token (and operand order in the message) depending on token storage order', () => {
-  const level = levelWithPresets('D-adder-survivor', [
-    preset('conveyor', -1, 0, { dir: 0 }),
-    preset('conveyor', 0, -1, { dir: 1 }),
-    preset('adder', 0, 0, { dir: 0 }),
-  ], { radius: 4 });
+const adderPresets = (): ReturnType<typeof preset>[] => [
+  preset('conveyor', -1, 0, { dir: 0 }),
+  preset('conveyor', 0, -1, { dir: 1 }),
+  preset('adder', 0, 0, { dir: 0 }),
+];
 
+function adderWorld(reverse: boolean, tokens: Array<[string, number, number, number, number]>): SimulationWorld {
+  const world = createWorldFromLevel(levelWithPresets('D-adder-survivor', adderPresets(), { radius: 4 }));
+  for (const [id, value, q, r, order] of tokens) addToken(world, id, value, q, r, order);
+  return reverse ? reverseStorageOrder(world) : world;
+}
+
+test('adder: simultaneous arrival keeps the older sphere (smaller spawnOrder) and prints the operands stably', () => {
+  const tokens: Array<[string, number, number, number, number]> = [
+    ['x', 3, -1, 0, 1],
+    ['y', 7, 0, -1, 2],
+  ];
+  const forward = adderWorld(false, tokens);
+  const reversed = adderWorld(true, tokens);
+  stepSimulation(forward);
+  stepSimulation(reversed);
+
+  assertMatchesRule('10@0,0', tokensAt(forward), 'арифметика не меняется: 3 + 7 = 10');
+  assertMatchesRule(tokensAt(forward), tokensAt(reversed));
+  assertMatchesRule(['x'], [...forward.tokens.keys()], 'выживает сфера с меньшим spawnOrder');
+  assertMatchesRule([...forward.tokens.keys()], [...reversed.tokens.keys()], 'выжившая сфера не зависит от порядка хранения');
+
+  const transformLog = (world: SimulationWorld) =>
+    world.events.filter((e) => e.type === 'transform').map((e) => e.message);
+  assertMatchesRule(['Сумматор Σ: 3 + 7 = 10'], transformLog(forward));
+  assertMatchesRule(transformLog(forward), transformLog(reversed), 'порядок слагаемых в сообщении стабилен');
+
+  const merged = (world: SimulationWorld) => (world.consumedTokens ?? []).map((t) => `${t.id}:${t.value}:${t.kind}`);
+  assertMatchesRule(['y:7:merge'], merged(forward));
+  assertMatchesRule(merged(forward), merged(reversed), 'журнал поглощённых сфер стабилен');
+});
+
+test('adder: the survivor follows spawnOrder first, so a late-created id never wins over the older sphere', () => {
+  // Идентификаторы сознательно противоречат spawnOrder: 'a' создана позже (9),
+  // 'z' — раньше (2). Сохраняться должна 'z', независимо от Map и от id.
+  const tokens: Array<[string, number, number, number, number]> = [
+    ['a', 3, -1, 0, 9],
+    ['z', 7, 0, -1, 2],
+  ];
+  const forward = adderWorld(false, tokens);
+  const reversed = adderWorld(true, tokens);
+  stepSimulation(forward);
+  stepSimulation(reversed);
+
+  assertMatchesRule('10@0,0', tokensAt(forward));
+  assertMatchesRule(['z'], [...forward.tokens.keys()]);
+  assertMatchesRule([...forward.tokens.keys()], [...reversed.tokens.keys()]);
+  assertMatchesRule(
+    ['Сумматор Σ: 7 + 3 = 10'],
+    forward.events.filter((e) => e.type === 'transform').map((e) => e.message),
+    'слагаемые печатаются в порядке (выжившая, поглощённая)',
+  );
+});
+
+test('adder: arrivals in different ticks keep the stored value, then produce the same sum and message', () => {
+  const tokens: Array<[string, number, number, number, number]> = [
+    ['x', 3, -1, 0, 1],
+    ['y', 7, 0, -1, 2],
+  ];
   const build = (reverse: boolean): SimulationWorld => {
-    const world = createWorldFromLevel(level);
-    if (reverse) {
-      addToken(world, 'y', 7, 0, -1, 2);
-      addToken(world, 'x', 3, -1, 0, 1);
-    } else {
-      addToken(world, 'x', 3, -1, 0, 1);
-      addToken(world, 'y', 7, 0, -1, 2);
-    }
-    return world;
+    const world = createWorldFromLevel(levelWithPresets('D-adder-sequential', [
+      preset('conveyor', -1, 0, { dir: 0 }),
+      preset('conveyor', 0, -2, { dir: 1 }),
+      preset('conveyor', 0, -1, { dir: 1 }),
+      preset('adder', 0, 0, { dir: 0 }),
+    ], { radius: 4 }));
+    addToken(world, 'y', 7, 0, -2, 2);
+    addToken(world, 'x', 3, -1, 0, 1);
+    return reverse ? reverseStorageOrder(world) : world;
   };
 
   const forward = build(false);
@@ -390,23 +452,56 @@ test('[P2] adder merge keeps a different surviving token (and operand order in t
   stepSimulation(forward);
   stepSimulation(reversed);
 
-  assertMatchesRule(tokensAt(forward), tokensAt(reversed), 'сумма и координата обязаны совпадать');
-  assert.equal([...forward.tokens.values()][0].value, 10);
-  assert.equal([...reversed.tokens.values()][0].value, 10);
-  const forwardSurvivor = [...forward.tokens.keys()].join(',');
-  const reversedSurvivor = [...reversed.tokens.keys()].join(',');
-  const forwardMessage = forward.events.filter((e) => e.type === 'transform').map((e) => e.message).join(' | ');
-  const reversedMessage = reversed.events.filter((e) => e.type === 'transform').map((e) => e.message).join(' | ');
+  // Первый такт: одно слагаемое уходит в память сумматора, второе ещё в пути.
+  assertMatchesRule(3, forward.machines.get('0,0')!.state.memory, 'первое слагаемое сохранено');
+  assertMatchesRule(tokensAt(forward), tokensAt(reversed));
+  assertMatchesRule('7@0,-1', tokensAt(forward));
 
-  documentDivergence({
-    id: 'adder-survivor-identity',
-    severity: 'P2',
-    title: 'Сумматор сохраняет ту сферу, которая раньше лежит в world.tokens, и в том же порядке печатает слагаемые',
-    expected: 'идентичность выжившей сферы и текст события не должны зависеть от порядка хранения',
-    actual: 'выживает первая сфера в порядке Map; сообщение «3 + 7» превращается в «7 + 3»',
-    note: 'Сумма и координата совпадают, поэтому результат уровня не меняется; расхождение затрагивает трассы, события и анимацию.',
-  }, { survivor: forwardSurvivor, message: forwardMessage }, { survivor: reversedSurvivor, message: reversedMessage });
+  stepSimulation(forward);
+  stepSimulation(reversed);
+
+  assertMatchesRule('10@0,0', tokensAt(forward));
+  assertMatchesRule(tokensAt(forward), tokensAt(reversed));
+  assertMatchesRule(null, forward.machines.get('0,0')!.state.memory, 'память освобождена после сложения');
+  const log = (world: SimulationWorld) => world.events.filter((e) => e.type === 'transform' || e.type === 'store').map((e) => e.message);
+  assertMatchesRule(
+    ['Сумматор Σ сохранил первое слагаемое: 3', 'Сумматор Σ: 3 + 7 = 10'],
+    log(forward),
+  );
+  assertMatchesRule(log(forward), log(reversed), 'диагностика последовательного приёма стабильна');
 });
+
+test('scales: simultaneous input sorts stably and keeps the sphere with the smaller spawnOrder', () => {
+  const tokens: Array<[string, number, number, number, number]> = [
+    ['x', 4, -1, 0, 1],
+    ['y', 9, 0, -1, 2],
+  ];
+  const build = (reverse: boolean): SimulationWorld => {
+    const world = createWorldFromLevel(levelWithPresets('D-scales-survivor', [
+      preset('conveyor', -1, 0, { dir: 0 }),
+      preset('conveyor', 0, -1, { dir: 1 }),
+      preset('scales', 0, 0, { dir: 0, altDir: 4 }),
+    ], { radius: 4 }));
+    for (const [id, value, q, r, order] of tokens) addToken(world, id, value, q, r, order);
+    return reverse ? reverseStorageOrder(world) : world;
+  };
+  const forward = build(false);
+  const reversed = build(true);
+  stepSimulation(forward);
+  stepSimulation(reversed);
+
+  assertMatchesRule(tokensAt(forward), tokensAt(reversed), 'физика не зависит от порядка');
+  // Выживает 'x' (меньший spawnOrder), а половина уходит на боковой выход.
+  assertMatchesRule(['t_1=4@0,-1', 'x=9@0,0'], world_ids(forward));
+  assertMatchesRule(world_ids(forward), world_ids(reversed), 'идентификаторы новых сфер стабильны');
+  const log = (world: SimulationWorld) => world.events.filter((e) => e.type === 'transform').map((e) => e.message);
+  assertMatchesRule(['Весы ⚖: 9 > 4'], log(forward));
+  assertMatchesRule(log(forward), log(reversed));
+});
+
+function world_ids(world: SimulationWorld): string[] {
+  return [...world.tokens.values()].map((t) => `${t.id}=${t.value}@${t.coord.q},${t.coord.r}`).sort();
+}
 
 test('[P2] two collisions in one tick: which hex is reported depends on token storage order', () => {
   const level = levelWithPresets('D-two-collisions', [
@@ -458,7 +553,7 @@ test('audit summary: the documented divergence registry matches the report and i
   const ids = rows.map((v) => v.id).sort();
   // node:test запускает каждый файл в своём процессе, поэтому реестр содержит
   // ровно те расхождения, которые задокументированы в этом файле.
-  const expectedIds = ['adder-survivor-identity', 'simultaneous-collision-report'];
+  const expectedIds = ['simultaneous-collision-report'];
   assert.deepEqual(ids, expectedIds, `расхождения этого файла: ${ids.join(', ')}`);
   for (const row of rows) {
     assert.ok(row.expected.length > 0 && row.actual.length > 0, `${row.id}: ожидаемое и фактическое поведение должны быть описаны`);

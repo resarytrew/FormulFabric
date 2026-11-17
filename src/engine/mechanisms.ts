@@ -1,5 +1,5 @@
 import { processAssembly } from './assembly';
-import { sortedTokens } from './deterministic-order';
+import { sortedMachines, sortedTokens, sortedTokensByOrigin } from './deterministic-order';
 import { activateSpawners } from './spawning';
 import { pushEvent, triggerError } from './events';
 import { hexEqual, hexKey, hexNeighbor, rotateDir } from './hex-math';
@@ -106,10 +106,16 @@ export function processMechanisms(world: SimulationWorld, movedTokenIds: Set<str
     });
   }
 
-  // Process Adder & Scales (2-input consumption & memory)
-  for (const machine of world.machines.values()) {
+  // Process Adder & Scales (2-input consumption & memory).
+  //
+  // Механизмы обходятся в каноническом порядке координат, а сферы на гексе — в
+  // порядке происхождения: `spawnOrder`, затем координата на начало такта
+  // (`prevCoord`), затем `id`. Поэтому при одновременном поступлении двух сфер
+  // сумматор сохраняет старую сферу (меньший `spawnOrder`) и печатает слагаемые
+  // в стабильном порядке, а не в порядке `Map`.
+  for (const machine of sortedMachines(world)) {
     if (machine.type !== 'adder' && machine.type !== 'scales') continue;
-    const tokensHere = Array.from(world.tokens.values()).filter((t) =>
+    const tokensHere = sortedTokensByOrigin(world).filter((t) =>
       hexEqual(t.coord, machine.coord),
     );
     if (tokensHere.length === 0) continue;
