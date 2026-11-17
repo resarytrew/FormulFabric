@@ -1,0 +1,13 @@
+# Architecture
+
+`src/engine/hex-engine.ts` is the public compatibility entry point and the tick coordinator. A tick resets visual interpolation, builds connected components, computes movement intents, resolves collisions, applies movement simultaneously, runs spawners and arithmetic mechanisms, processes assembly/recycling, then checks deliveries, deadlocks and victory. A failed phase returns immediately. This order is part of the game rules.
+
+The individual phases live in `movement-intents.ts`, `collisions.ts`, `movement-apply.ts`, `spawning.ts`, `mechanisms.ts`, `assembly.ts` and `delivery.ts`. `operations.ts` holds exact integer operations; `patterns.ts`, `components.ts` and `rotation.ts` implement matching and geometry. `world.ts` constructs worlds and validates player placements; `verifyLevelSolution` validates before running the level's verification streams. World state is mutable during a tick; `cloneWorld` makes the independent snapshots used by the UI and rewind.
+
+`chapters/` contains the four puzzle chapters. `machine-catalog.ts` owns the tool list and labels, while `levels.ts` retains the existing public exports and sandbox definition. `coordinates.ts`, `game-types.ts`, `level-types.ts`, `visual-types.ts` and `models/ui.ts` separate model definitions; `types.ts` remains a compatibility barrel.
+
+`App.tsx` composes editor, edit-history, progress, simulation-step and simulation-clock hooks. `services/storage.ts` isolates persisted data. The scene receives simulation events explicitly; `useSceneEvents.ts` schedules their effects, `sceneInput.ts` owns pointer and keyboard input, `useSceneCamera.ts` handles camera commands, and `disposeObjectTree.ts` owns object-tree disposal. Mesh signatures include conveyor topology and theme, so unchanged models can be retained.
+
+`npm test` runs engine, renderer and storage tests. Fixtures record complete world state at every tick for all 29 demo solutions, 42 verification streams, and selected arithmetic and collision failures, using the pre-refactor engine as reference. These fixtures do not substitute for visual playback, browser interactions, or exhaustive testing of arbitrary user-created layouts.
+
+Validation protects the public construction and solution-verification paths against invalid placements and limits. The game runs entirely on the client and exposes mutable world objects; this is not a security boundary against a caller that deliberately mutates state or replaces code. Authoritative anti-cheat would require a trusted verifier outside the client.
