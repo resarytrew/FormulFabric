@@ -8,7 +8,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createWorldFromLevel, stepSimulation } from './hex-engine';
+import { cloneWorld, createWorldFromLevel, stepSimulation } from './hex-engine';
 import { ALL_PUZZLE_LEVELS } from './levels';
 import { generateHexDisk, hexKey, hexNeighbor } from './hex-math';
 import {
@@ -32,21 +32,45 @@ interface RunOutcome {
   states: string[];
   /** Идентификаторы новых сфер по координатам — тоже обязаны совпадать. */
   ids: string[];
+  /** Наблюдаемые события такта: журнал, поглощения, доставки, счётчики. */
+  observables: string[];
   finalStatus: string;
   finalTick: number;
+}
+
+/**
+ * Наблюдаемая часть состояния, которая не входит в физическую проекцию, но
+ * видна игроку и в эталонных трассах: игровые события, поглощённые сферы и
+ * связи, падающие сферы, доставки, счётчики следующих id и множество
+ * посещённых клеток (в каноническом порядке — порядок вставки в Set не
+ * является игровым правилом, содержимое — является).
+ */
+function observableSnapshot(world: SimulationWorld): string {
+  return JSON.stringify({
+    events: world.events.map((e) => `${e.id}:${e.tick}:${e.type}:${e.coord.q},${e.coord.r}:${e.message}:${e.severity}:${(e.relatedCoords ?? []).map((c) => `${c.q},${c.r}`).join('|')}`),
+    consumed: (world.consumedTokens ?? []).map((t) => `${t.id}:${t.value}:${t.kind}:${t.coord.q},${t.coord.r}`),
+    consumedBonds: (world.consumedBonds ?? []).map((b) => `${b.a}-${b.b}`),
+    falling: world.fallingTokens,
+    sinkDeliveries: world.sinkDeliveries,
+    highlighted: world.errorHighlightHexes.map((c) => `${c.q},${c.r}`),
+    visited: [...world.visitedHexes].sort(),
+    counters: [world.nextTokenId, world.nextSpawnOrder, world.nextEventId, world.deliveredCount],
+  });
 }
 
 /** Прогоняет мир до терминального состояния, складывая канонический снимок каждого такта. */
 function runAndRecord(world: SimulationWorld, maxTicks = 180): RunOutcome {
   const states: string[] = [snapshotPhysicalState(world)];
   const ids: string[] = [snapshotTokenIdsByCoord(world)];
+  const observables: string[] = [observableSnapshot(world)];
   for (let tick = 0; tick < maxTicks; tick++) {
     if (world.status === 'victory' || world.status === 'error') break;
     stepSimulation(world);
     states.push(snapshotPhysicalState(world));
     ids.push(snapshotTokenIdsByCoord(world));
+    observables.push(observableSnapshot(world));
   }
-  return { states, ids, finalStatus: world.status, finalTick: world.tick };
+  return { states, ids, observables, finalStatus: world.status, finalTick: world.tick };
 }
 
 function assertSameRun(forward: RunOutcome, reverse: RunOutcome, label: string): void {
@@ -54,6 +78,7 @@ function assertSameRun(forward: RunOutcome, reverse: RunOutcome, label: string):
   for (let i = 0; i < forward.states.length; i++) {
     assert.equal(reverse.states[i], forward.states[i], `${label}: состояние разошлось на такте ${i}`);
     assert.equal(reverse.ids[i], forward.ids[i], `${label}: идентификаторы сфер разошлись на такте ${i}`);
+    assert.equal(reverse.observables[i], forward.observables[i], `${label}: события и счётчики разошлись на такте ${i}`);
   }
   assert.equal(reverse.finalStatus, forward.finalStatus, `${label}: разный итог уровня`);
   assert.equal(reverse.finalTick, forward.finalTick, `${label}: разное число тактов`);
@@ -615,6 +640,35 @@ test('collisions: the class priority of checks is preserved when several violati
   }
 });
 
+test('rewind: a cloned world continues identically, including new token ids and events', () => {
+  // Перемотка в UI — это `cloneWorld` + повторный `stepSimulation`. Стабилизация
+  // нумерации не должна зависеть от того, что мир был клонирован и восстановлен.
+  const level = levelWithPresets('D-rewind', [
+    preset('spawner', -3, 0, { dir: 0, sequence: [2, 6], loopSequence: true, spawnInterval: 1 }),
+    preset('conveyor', -2, 0, { dir: 0 }),
+    preset('conveyor', -1, 0, { dir: 0 }),
+    preset('dup', 0, 0, { dir: 0, altDir: 4 }),
+    preset('conveyor', 0, -1, { dir: 0 }),
+    preset('conveyor', 1, -1, { dir: 0 }),
+  ], { radius: 5 });
+
+  const direct = createWorldFromLevel(level);
+  const rewound = cloneWorld(direct);
+  const directRun = runAndRecord(direct, 12);
+  const rewindRun = runAndRecord(rewound, 12);
+  assertSameRun(directRun, rewindRun, 'clone before the first tick');
+
+  // Клон посреди прогона: продолжение обязано совпасть с прямым прогоном.
+  const base = createWorldFromLevel(level);
+  for (let i = 0; i < 4; i++) stepSimulation(base);
+  const continueDirect = runAndRecord(base, 8);
+
+  const midBase = createWorldFromLevel(level);
+  for (let i = 0; i < 4; i++) stepSimulation(midBase);
+  const continueClone = runAndRecord(cloneWorld(midBase), 8);
+  assertSameRun(continueDirect, continueClone, 'clone in the middle of the run');
+});
+
 test('events: flash and transform event order is stable under reversed storage order', () => {
   // Два независимых преобразования в одном такте: порядок событий и вспышек
   // задаётся каноническим обходом, а не порядком Map.
@@ -649,6 +703,31 @@ function sortedMachinesOf(world: SimulationWorld) {
     a.coord.q - b.coord.q || a.coord.r - b.coord.r,
   );
 }
+
+test('visited cells: the metric set is storage-order independent (its Set insertion order is not part of the contract)', () => {
+  // Единственный артефакт порядка хранения, который остался после PR #4B, —
+  // порядок вставки в `world.visitedHexes` (это Set, а трассы сериализуют его
+  // как массив). Содержимое множества — часть метрики «площадь», поэтому оно
+  // обязано совпадать; порядок вставки ни на что в движке не влияет.
+  const build = (reverse: boolean): SimulationWorld => {
+    const world = createWorldFromLevel(auditLevel({ id: `D-visited-${reverse}`, radius: 5 }));
+    addToken(world, 't1', 1, 4, 0, 1);
+    addToken(world, 't2', 2, 3, 1, 2);
+    bondTokens(world, 't1', 't2');
+    return reverse ? reverseStorageOrder(world) : world;
+  };
+  const forward = build(false);
+  const reversed = build(true);
+  stepSimulation(forward);
+  stepSimulation(reversed);
+
+  assertMatchesRule(
+    [...forward.visitedHexes].sort(),
+    [...reversed.visitedHexes].sort(),
+    'множество посещённых клеток не зависит от порядка хранения',
+  );
+  assertMatchesRule(['3,1', '4,0'], [...forward.visitedHexes].sort());
+});
 
 // ---------------------------------------------------------------------------
 // Сводка аудита
