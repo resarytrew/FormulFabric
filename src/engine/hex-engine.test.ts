@@ -751,6 +751,12 @@ test('solution verification rejects forbidden and over-budget placements', () =>
   const limited = { ...level, maxTotalBlocks: 0 };
   const allowed = [{ type: level.availableTools[0], coord: { q: 0, r: 0 }, config: { dir: 0 as const } }];
   assert.match(verifyLevelSolution(limited, allowed).results[0].reason ?? '', /лимит/);
+  for (const [target, blocks] of [[level, forbidden], [limited, allowed]] as const) {
+    const world = createWorldFromLevel(target, blocks);
+    assert.equal(world.status, 'error');
+    assert.equal(runUntilComplete(world).check.passed, false);
+    assert.equal(stepSimulation(world).status, 'error');
+  }
 });
 
 test('live simulation halts infinite feedback loop at MAX_SIMULATION_TICKS with diagnostic message', () => {

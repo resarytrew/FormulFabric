@@ -168,6 +168,8 @@ export function createWorldFromLevel(
   expectedSinkValues?: Record<string, number[]>,
   expectedSinkPolymers?: Record<string, number[][]>,
 ): SimulationWorld {
+  // Empty layouts are used as the placement reference by validation itself.
+  const placementErrors = playerMachines.length ? validateLevelPlacement(level, playerMachines) : [];
   const hexes = level.customHexes ?? generateHexDisk(level.radius);
   const platformHexes = new Set<HexKey>(hexes.map(hexKey));
   const narrowGapHexes = new Set<HexKey>((level.narrowGaps ?? []).map(hexKey));
@@ -260,7 +262,7 @@ export function createWorldFromLevel(
 
   return {
     tick: 0,
-    status: 'idle',
+    status: placementErrors.length ? 'error' : 'idle',
     platformHexes,
     narrowGapHexes,
     sinkFootprintHexes,
@@ -275,7 +277,7 @@ export function createWorldFromLevel(
     sinkDeliveries: {},
     visitedHexes,
     errorHighlightHexes: [],
-    errorReason: null,
+    errorReason: placementErrors.length ? placementErrors.join('; ') : null,
     fallingTokens: [],
     nextTokenId: 1,
     nextSpawnOrder: 1,
