@@ -393,3 +393,42 @@ test('P1: победа основного потока недостижима б
   checkVictory(world);
   assert.equal(world.status, 'victory');
 });
+
+
+test('sink identity checks respect replacement of an unlocked preset at its centre', () => {
+  const level: LevelDefinition = {
+    ...twoSinkLevel,
+    availableTools: ['sink', 'conveyor'],
+    presetMachines: [
+      { ...twoSinkLevel.presetMachines[0], locked: false },
+      twoSinkLevel.presetMachines[1],
+    ],
+  };
+  const replacedSink = [{
+    type: 'sink' as const,
+    coord: { q: -1, r: 0 },
+    config: { ...level.presetMachines[0].config },
+  }];
+
+  // The player replaces the unlocked fixture; both must not be counted.
+  assert.deepEqual(
+    lintVerificationExpectations({ expectedSinkValues: { main: [1] } }, level, replacedSink),
+    [],
+  );
+
+  // If the player replaces that sink with a conveyor, its old sinkId is gone.
+  const replacedWithConveyor = [{
+    type: 'conveyor' as const,
+    coord: { q: -1, r: 0 },
+    config: { dir: 0 as const },
+  }];
+  const errors = lintVerificationExpectations(
+    { expectedSinkValues: { main: [1] } },
+    level,
+    replacedWithConveyor,
+  );
+  assert.ok(
+    errors.some((error) => error.includes('отсутствует на уровне')),
+    `expected a missing sink after replacement, got: ${errors.join('; ')}`,
+  );
+});
