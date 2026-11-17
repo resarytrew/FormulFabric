@@ -1,6 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction, type RefObject } from 'react';
 import { sound } from '../audio/sound';
-import { createWorldFromLevel, getBlockedPlacementInfo } from '../engine/hex-engine';
+import { checkFootprintOverlaps, createWorldFromLevel, getBlockedPlacementInfo } from '../engine/hex-engine';
 import { hexEqual, hexKey, rotateDir } from '../engine/hex-math';
 import { TOOL_METADATA } from '../engine/levels';
 import type { AxialCoord, HexDir, LevelDefinition, MachineConfig, MachineType, RotatorMode, SimulationWorld } from '../engine/types';
@@ -12,18 +12,24 @@ import type { AppState } from './useSimulationClock';
 function sanitizeBlocksForLevel(lvl: LevelDefinition, blocks: PlacedBlock[]): PlacedBlock[] {
   const baseWorld = createWorldFromLevel(lvl, []);
   const seen = new Set<string>();
-  return blocks
-    .filter((b) => {
-      const k = hexKey(b.coord);
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return !getBlockedPlacementInfo(baseWorld, b.coord).blocked;
-    })
-    .map((b) => ({
+  const kept: PlacedBlock[] = [];
+  for (const b of blocks) {
+    const k = hexKey(b.coord);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    if (getBlockedPlacementInfo(baseWorld, b.coord).blocked) continue;
+    const block: PlacedBlock = {
       type: b.type,
       coord: { ...b.coord },
       config: structuredClone(b.config),
-    }));
+    };
+    // Keep a stored block only if its full occupied space (receiver pads
+    // included) still fits the final arrangement — a stale layout must not
+    // resurrect an overlap that the world builder would silently drop.
+    if (checkFootprintOverlaps(lvl, [...kept, block]).length > 0) continue;
+    kept.push(block);
+  }
+  return kept;
 }
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
@@ -134,7 +140,9 @@ export function useEditorActions({ isSimPlaying, appState, inspectedCoord, selec
       if (appState !== 'playing' || isSimPlaying) return;
       const key = hexKey(coord);
       if (selectedTool !== 'select' && selectedTool !== 'erase') {
-        const blockCheck = getBlockedPlacementInfo(worldRef.current, coord);
+        const blockCheck = getBlockedPlacementInfo(worldRef.current, coord, {
+          allowedOwnerId: worldRef.current.machines.get(key)?.id,
+        });
         if (blockCheck.blocked) {
           sound.playError();
           if (blockCheck.reason) {
@@ -281,7 +289,9 @@ export function useEditorActions({ isSimPlaying, appState, inspectedCoord, selec
   const handleMoveBlock = useCallback(
     (fromCoord: AxialCoord, toCoord: AxialCoord, newDir?: HexDir) => {
       if (appState !== 'playing' || isSimPlaying) return;
-      const blockCheck = getBlockedPlacementInfo(worldRef.current, toCoord);
+      const blockCheck = getBlockedPlacementInfo(worldRef.current, toCoord, {
+        allowedOwnerId: worldRef.current.machines.get(hexKey(toCoord))?.id,
+      });
       if (blockCheck.blocked) {
         sound.playError();
         showBudgetWarning(blockCheck.reason ?? 'Целевой гекс недоступен для размещения.');

@@ -1,6 +1,10 @@
 import { generateHexDisk, hexKey } from './hex-math';
 import { MIN_INT_VALUE, MAX_INT_VALUE } from './operations';
+import { getMachineFootprint, validateLevelFootprints } from './placement-validation';
 import type { AxialCoord, HexKey, LevelDefinition, MachineConfig, MachineInstance, MachineType, SimulationWorld } from './types';
+
+export { getMachineFootprint, getMachineOccupiedHexes } from './placement-validation';
+export type { PlacedMachine } from './placement-validation';
 
 export const SOLID_MACHINE_TYPES: ReadonlySet<MachineType> = new Set([
   'spawner',
@@ -55,24 +59,6 @@ export function createMachineInstance(
   };
 }
 
-export function getMachineFootprint(machine: {
-  type: MachineType;
-  coord: AxialCoord;
-  config: MachineConfig;
-}): AxialCoord[] {
-  if (
-    machine.type === 'sink' &&
-    machine.config.targetPattern &&
-    machine.config.targetPattern.nodes.length > 0
-  ) {
-    return machine.config.targetPattern.nodes.map((n) => ({
-      q: machine.coord.q + n.offset.q,
-      r: machine.coord.r + n.offset.r,
-    }));
-  }
-  return [{ ...machine.coord }];
-}
-
 function addSinkFootprintEntries(
   sinkFootprintHexes: Map<HexKey, string>,
   machineId: string,
@@ -87,6 +73,7 @@ function addSinkFootprintEntries(
 export function getBlockedPlacementInfo(
   world: SimulationWorld,
   coord: AxialCoord,
+  options?: { allowedOwnerId?: string },
 ): { blocked: boolean; reason?: string } {
   const key = hexKey(coord);
   if (!world.platformHexes.has(key)) {
@@ -98,7 +85,8 @@ export function getBlockedPlacementInfo(
       reason: 'Над узким разломом нельзя ставить механизм — через него пройдёт только сцепленный полимер (2+ сферы).',
     };
   }
-  if (world.sinkFootprintHexes.has(key)) {
+  const padOwnerId = world.sinkFootprintHexes.get(key);
+  if (padOwnerId && padOwnerId !== options?.allowedOwnerId) {
     return {
       blocked: true,
       reason: 'Клетка занята посадочной площадкой приёмника — механизмы здесь ставить нельзя.',
@@ -145,14 +133,18 @@ export function validateLevelPlacement(
       errors.push(`Механизм ${b.type} на (${b.coord.q}, ${b.coord.r}) находится вне платформы`);
     } else if (baseWorld.narrowGapHexes.has(key)) {
       errors.push(`Механизм ${b.type} на (${b.coord.q}, ${b.coord.r}) установлен над узким разломом`);
-    } else if (baseWorld.sinkFootprintHexes.has(key)) {
-      errors.push(`Механизм ${b.type} на (${b.coord.q}, ${b.coord.r}) перекрывает зону приёмника`);
     } else if (baseWorld.machines.get(key)?.locked) {
       errors.push(`Механизм ${b.type} на (${b.coord.q}, ${b.coord.r}) перекрывает фиксированный модуль`);
     }
 
     counts[b.type] = (counts[b.type] ?? 0) + 1;
   }
+
+  // Full-space check: every occupied cell of every object in the final
+  // arrangement, so multi-hex receivers cannot lose a side pad to a block.
+  errors.push(
+    ...validateLevelFootprints(level, blocks, baseWorld.platformHexes, baseWorld.narrowGapHexes),
+  );
 
   if (level.maxTotalBlocks !== undefined && blocks.length > level.maxTotalBlocks) {
     errors.push(`Превышен общий лимит блоков: ${blocks.length} > ${level.maxTotalBlocks}`);

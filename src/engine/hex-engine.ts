@@ -9,7 +9,8 @@ export { getConnectedComponents, type ConnectedComponent } from './components';
 export { getRotationSweptHexes } from './rotation';
 export { matchComponentToPattern } from './patterns';
 import { validateLevelPlacement, createWorldFromLevel } from './world';
-export { SOLID_MACHINE_TYPES, createMachineInstance, getMachineFootprint, getBlockedPlacementInfo, validateLevelPlacement, createWorldFromLevel } from './world';
+export { SOLID_MACHINE_TYPES, createMachineInstance, getMachineFootprint, getMachineOccupiedHexes, getBlockedPlacementInfo, validateLevelPlacement, createWorldFromLevel } from './world';
+export { checkFootprintOverlaps, checkFootprintPlacement, resolveFinalPlacement, validateLevelFootprints } from './placement-validation';
 export { MIN_INT_VALUE, MAX_INT_VALUE, evaluateFilterRule, isInRange, getExactDiv2, getExactSqrt, euclideanDivMod } from './operations';
 import { hexKey } from './hex-math';
 import type {
