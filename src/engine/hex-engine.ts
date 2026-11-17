@@ -1,47 +1,26 @@
+import { MAX_SIMULATION_TICKS } from './simulation-constants';
 import { applyMovement } from './movement-apply';
 import { processMechanisms } from './mechanisms';
 import { computeMovementIntents } from './movement-intents';
 import { resolveMovement } from './collisions';
-import { pushEvent, triggerError } from './events';
 import { finishSimulationTick } from './delivery';
 import { getConnectedComponents, type ConnectedComponent } from './components';
-import { getRotationSweptHexes } from './rotation';
-import { matchComponentToPattern } from './patterns';
 export { getConnectedComponents, type ConnectedComponent } from './components';
 export { getRotationSweptHexes } from './rotation';
 export { matchComponentToPattern } from './patterns';
-import { SOLID_MACHINE_TYPES, validateLevelPlacement, createWorldFromLevel } from './world';
+import { validateLevelPlacement, createWorldFromLevel } from './world';
 export { SOLID_MACHINE_TYPES, createMachineInstance, getMachineFootprint, getBlockedPlacementInfo, validateLevelPlacement, createWorldFromLevel } from './world';
-import { MIN_INT_VALUE, MAX_INT_VALUE, evaluateFilterRule, isInRange, getExactDiv2, getExactSqrt, euclideanDivMod } from './operations';
 export { MIN_INT_VALUE, MAX_INT_VALUE, evaluateFilterRule, isInRange, getExactDiv2, getExactSqrt, euclideanDivMod } from './operations';
-import {
-  hexDistance,
-  hexEqual,
-  hexKey,
-  hexNeighbor,
-  hexToWorld,
-  oppositeDir,
-  rotateAroundPivot,
-  rotateDir,
-  generateHexDisk,
-  worldToHex,
-} from './hex-math';
+import { hexKey } from './hex-math';
 import type {
   AxialCoord,
-  BondEdge,
-  FilterRule,
-  HexDir,
   HexKey,
   LevelDefinition,
   LevelGoalCheck,
   MachineConfig,
-  MachineInstance,
   MachineType,
-  SimEvent,
   SimulationWorld,
-  TargetPattern,
   Token,
-  TokenMoveSource,
   VerificationReport,
   VerificationRunResult,
 } from './types';
@@ -50,7 +29,6 @@ export function cloneWorld(world: SimulationWorld): SimulationWorld {
   return structuredClone(world);
 }
 
-import { MAX_SIMULATION_TICKS } from './simulation-constants';
 export { MAX_SIMULATION_TICKS } from './simulation-constants';
 
 export function computeWorldArea(world: SimulationWorld): number {

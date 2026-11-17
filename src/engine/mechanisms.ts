@@ -1,11 +1,10 @@
 import { processAssembly } from './assembly';
 import { activateSpawners } from './spawning';
-import { getConnectedComponents, type ConnectedComponent } from './components';
 import { pushEvent, triggerError } from './events';
-import { hexDistance, hexEqual, hexKey, hexNeighbor, oppositeDir, rotateAroundPivot, rotateDir } from './hex-math';
+import { hexEqual, hexKey, hexNeighbor, rotateDir } from './hex-math';
 import { SOLID_MACHINE_TYPES } from './world';
-import { evaluateFilterRule, isInRange, getExactDiv2, getExactSqrt, euclideanDivMod } from './operations';
-import type { AxialCoord, ConsumedTokenKind, HexDir, HexKey, MachineInstance, MachineType, SimulationWorld, Token } from './types';
+import { isInRange, getExactDiv2, getExactSqrt, euclideanDivMod } from './operations';
+import type { AxialCoord, ConsumedTokenKind, SimulationWorld, Token } from './types';
 
 export function processMechanisms(world: SimulationWorld, movedTokenIds: Set<string>, recordConsumed: (token: Token, kind: ConsumedTokenKind) => void): boolean | null {
   if (!activateSpawners(world, movedTokenIds)) return null;
