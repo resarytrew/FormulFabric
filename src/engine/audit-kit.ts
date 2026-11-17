@@ -18,6 +18,7 @@
  */
 import assert from 'node:assert/strict';
 import { hexDistance, hexKey } from './hex-math';
+import { getConnectedComponents } from './components';
 import type {
   AxialCoord,
   LevelDefinition,
@@ -188,6 +189,59 @@ export function assertBondGeometry(world: SimulationWorld, label = ''): void {
   }
 }
 
+/**
+ * Stronger invariant A: if a bonded component has exactly the same member IDs
+ * and bonds before and after a tick, EVERY pairwise distance must be preserved.
+ * Checking only bond lengths misses a bent chain whose two adjacent bonds
+ * both remain at distance 1.
+ *
+ * Components altered by welding, cutting, splitting or delivery are excluded:
+ * their connectivity changed, so this invariant does not assert rigid motion
+ * across those game-mechanic transformations.
+ */
+export function assertRigidComponentGeometry(
+  before: SimulationWorld,
+  after: SimulationWorld,
+  label = '',
+): void {
+  const afterByToken = new Map<string, string>();
+  for (const comp of getConnectedComponents(after)) {
+    const signature = [...comp.tokenIds].sort().join(',');
+    for (const id of comp.tokenIds) afterByToken.set(id, signature);
+  }
+
+  const bondSignature = (world: SimulationWorld, members: Set<string>) =>
+    world.bonds
+      .filter((bond) => members.has(bond.a) && members.has(bond.b))
+      .map((bond) => [bond.a, bond.b].sort().join(':'))
+      .sort()
+      .join(',');
+
+  for (const comp of getConnectedComponents(before)) {
+    if (comp.tokenIds.length < 2) continue;
+    const ids = [...comp.tokenIds].sort();
+    const members = new Set(ids);
+    const signature = ids.join(',');
+    // Only compare intact components that have not gained/lost any members.
+    if (ids.some((id) => afterByToken.get(id) !== signature)) continue;
+    if (bondSignature(before, members) !== bondSignature(after, members)) continue;
+
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const aBefore = before.tokens.get(ids[i])!;
+        const bBefore = before.tokens.get(ids[j])!;
+        const aAfter = after.tokens.get(ids[i])!;
+        const bAfter = after.tokens.get(ids[j])!;
+        assert.equal(
+          hexDistance(aAfter.coord, bAfter.coord),
+          hexDistance(aBefore.coord, bBefore.coord),
+          `${label}: полимер изменил форму между сферами ${ids[i]} и ${ids[j]}`,
+        );
+      }
+    }
+  }
+}
+
 /** Invariant B: after a finished tick no two spheres share a hex. */
 export function assertNoIllegalOverlaps(world: SimulationWorld, label = ''): void {
   const byHex = new Map<string, string>();
@@ -224,11 +278,16 @@ export function assertMovementInvariants(world: SimulationWorld, label = ''): vo
  * coordinates. Values, bonds, mechanism state, deliveries and the level result
  * are all represented. Token ids are deliberately excluded: they are an
  * artefact of allocation order, not part of the physics (see the id-order
- * divergence documented in movement-determinism.test.ts).
+ * divergence documented in movement-determinism.test.ts). Waiting-side-port
+ * and adder-tick flags ARE included because they may affect the next tick.
  */
 export function snapshotPhysicalState(world: SimulationWorld): string {
   const tokens = [...world.tokens.values()]
-    .map((t) => `${t.value}@${hexKey(t.coord)}`)
+    .map((t) => [
+      `${t.value}@${hexKey(t.coord)}`,
+      `waiting=${t.waitingSidePort ?? '-'}`,
+      `adderTick=${t.producedByAdderAtTick ?? '-'}`,
+    ].join('|'))
     .sort();
 
   const bonds = world.bonds
