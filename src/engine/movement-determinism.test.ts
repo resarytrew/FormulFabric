@@ -330,20 +330,24 @@ test('ids: two sources spawning in the same tick allocate the same token ids und
   assertMatchesRule(snapshotTokenIdsByCoord(forward), snapshotTokenIdsByCoord(reversed), 'идентификаторы не зависят от порядка');
 });
 
-test('[P2] transformer outputs allocate token ids in token storage order within one tick', () => {
-  // Копии/остатки/половины создаются в фазе механизмов; порядок их идентификаторов
-  // сейчас задаёт порядок обхода world.tokens, то есть порядок хранения в Map.
+test('ids: transformer outputs are numbered in canonical order within one tick, independent of Map order', () => {
+  // Дубликатор, делитель и раскольник срабатывают в одном такте: копия, остаток
+  // и половина получают t_N по стабильному порядку событий создания, а не по
+  // порядку обхода world.tokens / world.machines.
   const level = levelWithPresets('D-transformer-ids', [
     preset('conveyor', -1, 0, { dir: 0 }),
     preset('dup', 0, 0, { dir: 0, altDir: 4 }),
     preset('conveyor', -1, 2, { dir: 0 }),
-    preset('dup', 0, 2, { dir: 0, altDir: 4 }),
-  ], { radius: 4 });
+    preset('divmod', 0, 2, { dir: 0, altDir: 4, divisor: 2 }),
+    preset('conveyor', -1, 4, { dir: 0 }),
+    preset('halver', 0, 4, { dir: 0, altDir: 4 }),
+  ], { radius: 6 });
 
   const build = (reverse: boolean): SimulationWorld => {
     const world = createWorldFromLevel(level);
     addToken(world, 'a', 2, -1, 0, 1);
     addToken(world, 'b', 5, -1, 2, 2);
+    addToken(world, 'c', 8, -1, 4, 3);
     return reverse ? reverseStorageOrder(world) : world;
   };
 
@@ -353,18 +357,13 @@ test('[P2] transformer outputs allocate token ids in token storage order within 
   stepSimulation(reversed);
 
   assertMatchesRule(tokensAt(forward), tokensAt(reversed), 'физика не должна зависеть от порядка');
-  const forwardIds = snapshotTokenIdsByCoord(forward);
-  const reverseIds = snapshotTokenIdsByCoord(reversed);
-  assert.notEqual(forwardIds, reverseIds, 'подготовка теста: идентификаторы должны зависеть от порядка');
+  const expectedIds = '0,-1=t_1;0,0=a;0,1=t_2;0,2=b;0,3=t_3;0,4=c';
+  assertMatchesRule(expectedIds, snapshotTokenIdsByCoord(forward));
+  assertMatchesRule(snapshotTokenIdsByCoord(forward), snapshotTokenIdsByCoord(reversed), 'идентификаторы не зависят от порядка');
 
-  documentDivergence({
-    id: 'token-id-allocation-order',
-    severity: 'P2',
-    title: 'Идентификаторы новых сфер (t_N) выдаются в порядке обхода world.machines/world.tokens',
-    expected: 'идентификаторы не должны зависеть от порядка хранения: стабильный порядок событий создания внутри фазы такта',
-    actual: 'копии двух дубликаторов нумеруются в порядке обхода world.tokens, хотя координаты и значения совпадают',
-    note: 'Физика совпадает, но меняются события, consumedTokens и анимационные ключи; PR #4B — стабильная нумерация.',
-  }, forwardIds, reverseIds);
+  const transformLog = (world: SimulationWorld) =>
+    world.events.filter((e) => e.type === 'transform').map((e) => `${e.coord.q},${e.coord.r}:${e.message}`);
+  assertMatchesRule(transformLog(forward), transformLog(reversed), 'порядок событий преобразований стабилен');
 });
 
 test('[P2] adder merge keeps a different surviving token (and operand order in the message) depending on token storage order', () => {
@@ -459,7 +458,7 @@ test('audit summary: the documented divergence registry matches the report and i
   const ids = rows.map((v) => v.id).sort();
   // node:test запускает каждый файл в своём процессе, поэтому реестр содержит
   // ровно те расхождения, которые задокументированы в этом файле.
-  const expectedIds = ['adder-survivor-identity', 'simultaneous-collision-report', 'token-id-allocation-order'];
+  const expectedIds = ['adder-survivor-identity', 'simultaneous-collision-report'];
   assert.deepEqual(ids, expectedIds, `расхождения этого файла: ${ids.join(', ')}`);
   for (const row of rows) {
     assert.ok(row.expected.length > 0 && row.actual.length > 0, `${row.id}: ожидаемое и фактическое поведение должны быть описаны`);
