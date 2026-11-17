@@ -10,18 +10,8 @@ import {
 } from '../engine/levels';
 import type { LevelDefinition, PuzzleChapter } from '../engine/types';
 
-export interface LevelProgressRecord {
-  completed: boolean;
-  bestTicks?: number;
-  bestBlocks?: number;
-  bestArea?: number;
-  medals?: {
-    blocks: boolean;
-    ticks: boolean;
-    area: boolean;
-  };
-  hintsUsed?: number;
-}
+import type { LevelProgressRecord } from '../models/ui';
+export type { LevelProgressRecord } from '../models/ui';
 
 interface CampaignModalProps {
   currentLevelId: string;

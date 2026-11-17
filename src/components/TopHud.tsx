@@ -16,7 +16,8 @@ import {
 import type { LevelDefinition, SimulationWorld } from '../engine/types';
 import type { PaletteThemeId } from '../render/celMaterials';
 
-export type UiStyleMode = 'skyline' | 'classic';
+import type { UiStyleMode } from '../models/ui';
+export type { UiStyleMode } from '../models/ui';
 
 interface TopHudProps {
   level: LevelDefinition;

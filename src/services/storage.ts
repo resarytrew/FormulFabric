@@ -1,6 +1,4 @@
-import type { VariantSlotId } from '../components/BottomDock';
-import type { LevelProgressRecord } from '../components/CampaignModal';
-import type { UiStyleMode } from '../components/TopHud';
+import type { VariantSlotId, LevelProgressRecord, UiStyleMode } from '../models/ui';
 import type { AxialCoord, MachineConfig, MachineType } from '../engine/types';
 
 export interface PlacedBlock {

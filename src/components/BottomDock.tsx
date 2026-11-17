@@ -17,7 +17,8 @@ import { DIR_LABELS_RU } from '../engine/hex-math';
 import { TOOL_METADATA } from '../engine/levels';
 import type { HexDir, MachineType, RotatorMode, SimEvent } from '../engine/types';
 
-export type VariantSlotId = 'A' | 'B' | 'C';
+import type { VariantSlotId, VariantSummary } from '../models/ui';
+export type { VariantSlotId, VariantSummary } from '../models/ui';
 type ToolCategoryFilter = 'all' | 'math' | 'transport' | 'assembly' | 'io';
 
 const CATEGORY_TABS: Array<{ id: ToolCategoryFilter; label: string }> = [
@@ -27,11 +28,6 @@ const CATEGORY_TABS: Array<{ id: ToolCategoryFilter; label: string }> = [
   { id: 'assembly', label: 'Сборка' },
   { id: 'io', label: 'Ввод/Вывод' },
 ];
-
-export interface VariantSummary {
-  blocks: number;
-  bestTicks?: number;
-}
 
 interface BottomDockProps {
   availableTools: MachineType[];
