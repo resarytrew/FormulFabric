@@ -1,3 +1,4 @@
+import { useSceneCamera } from './useSceneCamera';
 import { useSceneEvents } from './useSceneEvents';
 import { disposeObjectTree } from './disposeObjectTree';
 import { machineMeshSignature } from './machineMeshSignature';
@@ -256,14 +257,7 @@ export function HexScene3D({
     }
   }, [platformSig]);
 
-  // Auto-frame camera smoothly when leaving Title mode into active gameplay
-  const prevTitleModeRef = useRef(isTitleMode);
-  useEffect(() => {
-    if (prevTitleModeRef.current && !isTitleMode) {
-      sceneApiRef.current?.resetCamera();
-    }
-    prevTitleModeRef.current = isTitleMode;
-  }, [isTitleMode]);
+  useSceneCamera(sceneApiRef, isTitleMode, cameraResetTrigger, focusCoordTrigger);
 
   // Sync theme palette
   useEffect(() => {
@@ -293,18 +287,6 @@ export function HexScene3D({
       }
     }
   }, [world.fallingTokens]);
-
-  useEffect(() => {
-    if (cameraResetTrigger > 0) {
-      sceneApiRef.current?.resetCamera();
-    }
-  }, [cameraResetTrigger]);
-
-  useEffect(() => {
-    if (focusCoordTrigger) {
-      sceneApiRef.current?.focusCoord(focusCoordTrigger.coord);
-    }
-  }, [focusCoordTrigger]);
 
   useEffect(() => {
     const container = mountRef.current;
