@@ -16,6 +16,7 @@ import {
   isErrorWorld,
   isTerminal,
   assertBondGeometry,
+  assertRigidComponentGeometry,
   assertNoIllegalOverlaps,
   assertMovementInvariants,
   assertTokensOnPlatform,
@@ -245,12 +246,37 @@ test('A/B/C: 200 seeded random worlds keep geometry, occupancy and platform inva
     if (isErrorWorld(world)) continue;
     simulated += 1;
     for (let tick = 0; tick < 40; tick++) {
+      const before = structuredClone(world);
       assert.doesNotThrow(() => stepSimulation(world), `seed ${seed}: движок бросил исключение на такте ${world.tick}`);
       assertMovementInvariants(world, `seed ${seed}, tick ${world.tick}, status=${world.status}`);
+      assertRigidComponentGeometry(before, world, `seed ${seed}, tick ${world.tick}`);
       if (isTerminal(world)) break;
     }
   }
   assert.ok(simulated > 150, `слишком мало сгенерированных миров: ${simulated}`);
+});
+
+test('A: bond lengths alone do not guarantee rigid geometry of a three-sphere chain', () => {
+  const level = auditLevel({ id: 'A-bent-chain', radius: 3 });
+  const before = createWorldFromLevel(level);
+  addToken(before, 'a', 1, 0, 0);
+  addToken(before, 'b', 2, 1, 0);
+  addToken(before, 'c', 3, 2, 0);
+  bondTokens(before, 'a', 'b');
+  bondTokens(before, 'b', 'c');
+
+  const bent = structuredClone(before);
+  bent.tokens.get('c')!.coord = { q: 0, r: 1 };
+  // Both declared bonds are still length 1, but endpoints a/c became closer.
+  assert.doesNotThrow(() => assertBondGeometry(bent));
+  assert.throws(
+    () => assertRigidComponentGeometry(before, bent, 'bent chain'),
+    /полимер изменил форму/,
+  );
+
+  const translated = structuredClone(before);
+  for (const tok of translated.tokens.values()) tok.coord = hexNeighbor(tok.coord, 0);
+  assert.doesNotThrow(() => assertRigidComponentGeometry(before, translated, 'rigid translation'));
 });
 
 // ---------------------------------------------------------------------------
