@@ -228,11 +228,26 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
     .filter((tok) => proposedCoordByToken.has(tok.id))
     .map((tok) => [tok.id, proposedCoordByToken.get(tok.id)!] as [string, AxialCoord]);
 
-  // Check Rotator Swept-Arc Obstacles (solid machine housings & non-component spheres on swept sector)
+  // Check Rotator Swept-Arc Obstacles (solid machine housings & non-component spheres on swept sector).
+  //
+  // Правило промежуточных траекторий (PR #4D): занятость гекса на дуге считается
+  // по объединению «начало ∪ конец» такта. Сфера, которая в этом же такте
+  // покидает сектор, всё ещё перекрывает дугу в момент, когда поворачивающаяся
+  // сфера проходит через её гекс, поэтому поворот отклоняется. Проверяемые
+  // препятствия — только объекты вне поворачиваемого компонента (сферы самого
+  // компонента движутся вместе с дугой).
   for (const comp of components) {
     const intent = resolvedIntentByComp.get(comp.id);
     if (!intent || intent.kind !== 'rotate') continue;
     const compSet = new Set(comp.tokenIds);
+    // Один индекс «начало ∪ конец» на компонент: гексы, занятые в этом такте
+    // сферами вне компонента.
+    const blockedHexes = new Set<HexKey>();
+    for (const other of orderedTokens) {
+      if (compSet.has(other.id)) continue;
+      blockedHexes.add(hexKey(other.coord));
+      blockedHexes.add(hexKey(proposedCoordByToken.get(other.id) ?? other.coord));
+    }
     for (const id of comp.tokenIds) {
       const tok = world.tokens.get(id)!;
       const sweptHexes = getRotationSweptHexes(tok.coord, intent.pivot, intent.cwSteps);
@@ -248,17 +263,14 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
           );
           return null;
         }
-        for (const [otherId, otherProposed] of orderedProposed) {
-          if (compSet.has(otherId)) continue;
-          if (hexEqual(otherProposed, sweptHex)) {
-            triggerError(
-              world,
-              'Столкновение на дуге поворота ротатора: сектор поворота занят другой сферой',
-              [intent.pivot, sweptHex],
-              'collision',
-            );
-            return null;
-          }
+        if (blockedHexes.has(sKey)) {
+          triggerError(
+            world,
+            'Столкновение на дуге поворота ротатора: сектор поворота занят другой сферой',
+            [intent.pivot, sweptHex],
+            'collision',
+          );
+          return null;
         }
       }
     }
