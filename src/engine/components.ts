@@ -1,0 +1,56 @@
+import type { SimulationWorld } from './types';
+
+export interface ConnectedComponent {
+  id: string;
+  tokenIds: string[];
+  bondIndices: number[];
+}
+
+export function getConnectedComponents(world: SimulationWorld): ConnectedComponent[] {
+  const adj = new Map<string, string[]>();
+  for (const id of world.tokens.keys()) {
+    adj.set(id, []);
+  }
+  for (const edge of world.bonds) {
+    if (world.tokens.has(edge.a) && world.tokens.has(edge.b)) {
+      adj.get(edge.a)!.push(edge.b);
+      adj.get(edge.b)!.push(edge.a);
+    }
+  }
+
+  const visited = new Set<string>();
+  const components: ConnectedComponent[] = [];
+
+  for (const id of world.tokens.keys()) {
+    if (visited.has(id)) continue;
+    const stack = [id];
+    const tokenIds: string[] = [];
+    visited.add(id);
+    while (stack.length > 0) {
+      const curr = stack.pop()!;
+      tokenIds.push(curr);
+      for (const nb of adj.get(curr) ?? []) {
+        if (!visited.has(nb)) {
+          visited.add(nb);
+          stack.push(nb);
+        }
+      }
+    }
+    tokenIds.sort();
+    const tokenSet = new Set(tokenIds);
+    const bondIndices: number[] = [];
+    world.bonds.forEach((b, idx) => {
+      if (tokenSet.has(b.a) && tokenSet.has(b.b)) {
+        bondIndices.push(idx);
+      }
+    });
+    components.push({
+      id: tokenIds[0],
+      tokenIds,
+      bondIndices,
+    });
+  }
+
+  return components;
+}
+

@@ -712,6 +712,15 @@ test('hidden verificationRuns catch hardcoded solution that passes only visible 
   // If we use divmod(b=27) -> no, let's check with a synthetic level that mirrors visible vs hidden:
   const antiCheatLevel: LevelDefinition = {
     ...eur7,
+    availableTools: [...new Set([...eur7.availableTools, 'add1' as const, 'conveyor' as const])],
+    requiredDeliveries: 1,
+    presetMachines: eur7.presetMachines.map(machine => {
+      if (machine.type === 'spawner') return { ...machine, config: { ...machine.config, sequence: [2] } };
+      if (machine.type === 'sink' && machine.config.targetPattern) {
+        return { ...machine, config: { ...machine.config, targetPattern: { ...machine.config.targetPattern, expectedValues: [4] } } };
+      }
+      return machine;
+    }),
     demoSolution: undefined,
     verificationRuns: [
       {
@@ -739,6 +748,53 @@ test('hidden verificationRuns catch hardcoded solution that passes only visible 
   assert.equal(report.total, 2);
   assert.equal(report.results[0].passed, true);
   assert.equal(report.results[1].passed, false);
+
+  const wrongPrimary: LevelDefinition = {
+    ...antiCheatLevel,
+    presetMachines: antiCheatLevel.presetMachines.map(machine => machine.type === 'sink' && machine.config.targetPattern
+      ? { ...machine, config: { ...machine.config, targetPattern: { ...machine.config.targetPattern, expectedValues: [5] } } }
+      : machine),
+    verificationRuns: antiCheatLevel.verificationRuns?.slice(0, 1),
+  };
+  const primaryReport = verifyLevelSolution(wrongPrimary, hardcodedAdd2, 60);
+  assert.equal(primaryReport.passed, 1);
+  assert.equal(primaryReport.total, 2);
+  assert.equal(primaryReport.results[1].name, 'Основной поток');
+  assert.equal(primaryReport.results[1].passed, false);
+});
+
+test('solution verification rejects forbidden and over-budget placements', () => {
+  const level = CAMPAIGN_LEVELS[0];
+  const forbidden = [{ type: 'sqrt' as const, coord: { q: 0, r: 0 }, config: { dir: 0 as const } }];
+  assert.ok(!level.availableTools.includes('sqrt'));
+  assert.equal(verifyLevelSolution(level, forbidden).passed, 0);
+  assert.match(verifyLevelSolution(level, forbidden).results[0].reason ?? '', /недоступен/);
+  const limited = { ...level, maxTotalBlocks: 0 };
+  const allowed = [{ type: level.availableTools[0], coord: { q: 0, r: 0 }, config: { dir: 0 as const } }];
+  assert.match(verifyLevelSolution(limited, allowed).results[0].reason ?? '', /лимит/);
+  for (const [target, blocks] of [[level, forbidden], [limited, allowed]] as const) {
+    const world = createWorldFromLevel(target, blocks);
+    assert.equal(world.status, 'error');
+    assert.equal(runUntilComplete(world).check.passed, false);
+    assert.equal(stepSimulation(world).status, 'error');
+  }
+  const invalidDirection = [{ ...allowed[0], config: { dir: 6 as unknown as 0 } }];
+  const invalidWorld = createWorldFromLevel(level, invalidDirection);
+  assert.equal(invalidWorld.status, 'error');
+  assert.match(invalidWorld.errorReason ?? '', /направление/);
+  const duplicates = [allowed[0], { ...allowed[0] }];
+  const outside = [{ ...allowed[0], coord: { q: 100, r: 100 } }];
+  const zeroQuota = { ...level, partLimits: { [allowed[0].type]: 0 } };
+  for (const [target, blocks, message] of [
+    [level, duplicates, /Дублирующая/],
+    [level, outside, /вне платформы/],
+    [zeroQuota, allowed, /лимит/],
+  ] as const) {
+    const world = createWorldFromLevel(target, blocks);
+    assert.equal(world.status, 'error');
+    assert.match(world.errorReason ?? '', message);
+    assert.equal(verifyLevelSolution(target, blocks).passed, 0);
+  }
 });
 
 test('live simulation halts infinite feedback loop at MAX_SIMULATION_TICKS with diagnostic message', () => {

@@ -115,6 +115,19 @@ test('machine actuator stroke stays poised during travel and peaks at trigger al
   assert.ok(Math.abs(end.flashArc) < 1e-6);
 });
 
+test('machine actuator return is continuous at the tail and its endpoint', () => {
+  const tailStart = TOKEN_TRIGGER_ALPHA + (1 - TOKEN_TRIGGER_ALPHA) * 0.9;
+  const epsilon = 1e-7;
+  for (const point of [tailStart, 1]) {
+    const before = evaluateMachineActionCurves(point - epsilon, true).stroke;
+    const at = evaluateMachineActionCurves(point, true).stroke;
+    const after = evaluateMachineActionCurves(point + epsilon, true).stroke;
+    assert.ok(Math.abs(before - at) < 1e-5);
+    assert.ok(Math.abs(after - at) < 1e-5);
+  }
+  assert.ok(Math.abs(evaluateMachineActionCurves(1 - epsilon, true).stroke) < 1e-5);
+});
+
 test('consumed tokens travel, pause on target machine, then absorb cleanly', () => {
   const dwell = evaluateConsumedTokenTimeline(0.49);
   assert.equal(dwell.visible, true);

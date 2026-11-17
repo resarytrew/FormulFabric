@@ -231,7 +231,11 @@ export function evaluateMachineActionCurves(
   const returnT = (a - TOKEN_TRIGGER_ALPHA) / (1 - TOKEN_TRIGGER_ALPHA);
   const baseReturn = Math.cos(returnT * (Math.PI / 2));
   const settle = Math.sin(returnT * Math.PI * 2.2) * Math.exp(-returnT * 4.5) * 0.06;
-  const stroke = Math.max(-0.08, baseReturn + settle);
+  // Remove the tiny residual of the damped sine smoothly over the final 10%.
+  const tailT = Math.max(0, (returnT - 0.9) / 0.1);
+  const tailBlend = tailT * tailT * (3 - 2 * tailT);
+  const residual = Math.sin(Math.PI * 2.2) * Math.exp(-4.5) * 0.06;
+  const stroke = Math.max(-0.08, baseReturn + settle - residual * tailBlend);
   const flashArc = Math.pow(Math.max(0, 1 - returnT), 0.75);
   return { stroke, flashArc };
 }
