@@ -778,6 +778,10 @@ test('solution verification rejects forbidden and over-budget placements', () =>
     assert.equal(runUntilComplete(world).check.passed, false);
     assert.equal(stepSimulation(world).status, 'error');
   }
+  const invalidDirection = [{ ...allowed[0], config: { dir: 6 as unknown as 0 } }];
+  const invalidWorld = createWorldFromLevel(level, invalidDirection);
+  assert.equal(invalidWorld.status, 'error');
+  assert.match(invalidWorld.errorReason ?? '', /направление/);
 });
 
 test('live simulation halts infinite feedback loop at MAX_SIMULATION_TICKS with diagnostic message', () => {

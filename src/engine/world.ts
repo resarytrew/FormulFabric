@@ -123,7 +123,15 @@ export function validateLevelPlacement(
   const counts: Partial<Record<MachineType, number>> = {};
 
   for (const b of blocks) {
+    if (!b || !b.coord || !b.config || !Number.isInteger(b.coord.q) || !Number.isInteger(b.coord.r)) {
+      errors.push('Некорректные данные механизма или координаты');
+      continue;
+    }
     const key = hexKey(b.coord);
+    if (!Number.isInteger(b.config.dir) || b.config.dir < 0 || b.config.dir > 5 ||
+      (b.config.altDir !== undefined && (!Number.isInteger(b.config.altDir) || b.config.altDir < 0 || b.config.altDir > 5))) {
+      errors.push(`Некорректное направление механизма на (${b.coord.q}, ${b.coord.r})`);
+    }
     if (!level.availableTools.includes(b.type)) {
       errors.push(`Механизм ${b.type} недоступен на этом уровне`);
     }
@@ -170,6 +178,12 @@ export function createWorldFromLevel(
 ): SimulationWorld {
   // Empty layouts are used as the placement reference by validation itself.
   const placementErrors = playerMachines.length ? validateLevelPlacement(level, playerMachines) : [];
+  if (placementErrors.length) {
+    const world = createWorldFromLevel(level, [], spawnerOverrides, expectedSinkValues, expectedSinkPolymers);
+    world.status = 'error';
+    world.errorReason = placementErrors.join('; ');
+    return world;
+  }
   const hexes = level.customHexes ?? generateHexDisk(level.radius);
   const platformHexes = new Set<HexKey>(hexes.map(hexKey));
   const narrowGapHexes = new Set<HexKey>((level.narrowGaps ?? []).map(hexKey));
@@ -262,7 +276,7 @@ export function createWorldFromLevel(
 
   return {
     tick: 0,
-    status: placementErrors.length ? 'error' : 'idle',
+    status: 'idle',
     platformHexes,
     narrowGapHexes,
     sinkFootprintHexes,
@@ -277,7 +291,7 @@ export function createWorldFromLevel(
     sinkDeliveries: {},
     visitedHexes,
     errorHighlightHexes: [],
-    errorReason: placementErrors.length ? placementErrors.join('; ') : null,
+    errorReason: null,
     fallingTokens: [],
     nextTokenId: 1,
     nextSpawnOrder: 1,
