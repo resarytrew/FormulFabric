@@ -42,6 +42,78 @@ export type FinalMachine = {
   replacesPresetIndex?: number;
 };
 
+/**
+ * A single, machine-readable placement problem. `coords` is exactly what the
+ * player must look at, so the UI can highlight the offending cell or receiver
+ * pad instead of guessing from a sentence.
+ */
+export interface PlacementIssue {
+  /** Stable machine-readable code, e.g. `overlap`, `pad@chasm`. */
+  code: PlacementIssueCode;
+  message: string;
+  coords: AxialCoord[];
+  /** Index into the player block list, when the issue belongs to one block. */
+  machineIndex?: number;
+}
+
+export type PlacementIssueCode =
+  | 'invalid-data'
+  | 'invalid-direction'
+  | 'unknown-pattern'
+  | 'invalid-pattern'
+  | 'tool-unavailable'
+  | 'duplicate'
+  | 'outside-platform'
+  | 'narrow-chasm'
+  | 'locked-fixture'
+  | 'overlap'
+  | 'total-limit'
+  | 'part-limit';
+
+export function issue(
+  code: PlacementIssueCode,
+  message: string,
+  coords: AxialCoord[],
+  machineIndex?: number,
+): PlacementIssue {
+  // De-duplicated: a contested cell is often both the pad and the block centre.
+  const seen = new Set<HexKey>();
+  const unique: AxialCoord[] = [];
+  for (const coord of coords) {
+    if (!isValidCoord(coord)) continue;
+    const key = hexKey(coord);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push({ q: coord.q, r: coord.r });
+  }
+  return {
+    code,
+    message,
+    coords: unique,
+    ...(machineIndex === undefined ? {} : { machineIndex }),
+  };
+}
+
+/** Flatten structured issues for call sites that only need text. */
+export function issueMessages(issues: PlacementIssue[]): string[] {
+  return issues.map((i) => i.message);
+}
+
+/** Every distinct hex mentioned by the given issues (for error highlighting). */
+export function issueCoords(issues: PlacementIssue[]): AxialCoord[] {
+  const seen = new Set<HexKey>();
+  const coords: AxialCoord[] = [];
+  for (const i of issues) {
+    for (const c of i.coords) {
+      const key = hexKey(c);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      coords.push({ q: c.q, r: c.r });
+    }
+  }
+  return coords;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -346,23 +418,34 @@ export function resolveFinalPlacement(
  * of every object is claimed at most once, so a machine dropped on a side pad of
  * a multi-hex receiver is reported instead of silently replacing part of it.
  */
-export function checkFootprintOverlaps(
+export function checkFootprintOverlapIssues(
   level: LevelDefinition,
   blocks: FootprintMachine[],
-): string[] {
-  const errors: string[] = [];
-  const occupied = new Map<HexKey, string>();
+): PlacementIssue[] {
+  const issues: PlacementIssue[] = [];
+  const occupied = new Map<HexKey, { label: string; coord: AxialCoord; centre: AxialCoord }>();
   const final = resolveFinalPlacement(level, blocks, undefined, new Set(), { dropConflicts: false });
+  const playerMachines = blocks ?? [];
 
   for (const [index, machine] of final.entries()) {
     const name = finalMachineLabel(machine);
+    const machineIndex = machine.origin.startsWith('player:')
+      ? Number(machine.origin.slice('player:'.length))
+      : undefined;
 
     if (!isValidCoord(machine.coord)) {
-      errors.push(`Механизм #${index + 1}: неверные координаты`);
+      issues.push(issue('invalid-data', `Механизм #${index + 1}: неверные координаты`, [], machineIndex));
       continue;
     }
     if (!hasValidCells(machine)) {
-      errors.push(`Механизм ${machineLabel(machine, index)}: неверные координаты площадки`);
+      issues.push(
+        issue(
+          'invalid-data',
+          `Механизм ${machineLabel(machine, index)}: неверные координаты площадки`,
+          [machine.coord],
+          machineIndex,
+        ),
+      );
       continue;
     }
 
@@ -371,35 +454,79 @@ export function checkFootprintOverlaps(
       const key = hexKey(coord);
       const previous = occupied.get(key);
 
-      if (previous && previous !== name) {
-        errors.push(`Пересечение ${name} и ${previous} на ${key}`);
+      if (previous && previous.label !== name) {
+        // Name the contested cell and every centre it involves, so the UI can
+        // highlight the actual pad instead of guessing from the sentence.
+        const contested: AxialCoord[] = [coord, previous.coord];
+        if (previous.centre) contested.push(previous.centre);
+        issues.push(
+          issue(
+            'overlap',
+            `Пересечение ${name} и ${previous.label} на ${key}`,
+            contested,
+            machineIndex,
+          ),
+        );
       } else {
-        occupied.set(key, name);
+        occupied.set(key, { label: name, coord: { ...coord }, centre: { ...machine.coord } });
       }
     }
   }
 
-  return errors;
+  // A dropped player block would otherwise vanish without an explanation.
+  for (const [index, block] of playerMachines.entries()) {
+    if (!block) {
+      issues.push(issue('invalid-data', 'Некорректные данные механизма или координаты', [], index));
+      continue;
+    }
+    if (!isValidCoord(block.coord)) {
+      issues.push(issue('invalid-data', 'Механизм без корректных координат', [], index));
+      continue;
+    }
+    if (getMachineConfig(block) === undefined) {
+      issues.push(
+        issue(
+          'invalid-data',
+          `Механизм ${block.type} на (${block.coord.q}, ${block.coord.r}) не содержит конфигурации`,
+          [block.coord],
+          index,
+        ),
+      );
+    }
+  }
+
+  return issues;
+}
+
+export function checkFootprintOverlaps(
+  level: LevelDefinition,
+  blocks: FootprintMachine[],
+): string[] {
+  return issueMessages(checkFootprintOverlapIssues(level, blocks));
 }
 
 /**
  * Geometry check for every occupied cell of the definitive arrangement: the hex
  * must belong to the platform and must not be a narrow chasm. A player machine
  * centre keeps the legacy wording; extra pad cells and fixed fixtures are named
- * explicitly.
+ * explicitly, and the reported coordinates are exactly the offending cells.
  */
-export function checkFootprintPlacement(
+export function checkFootprintPlacementIssues(
   machines: Array<PlacedMachine | FinalMachine>,
   platformHexes: ReadonlySet<HexKey>,
   narrowGapHexes: ReadonlySet<HexKey>,
-): string[] {
-  const errors: string[] = [];
+): PlacementIssue[] {
+  const issues: PlacementIssue[] = [];
 
   for (const [index, machine] of machines.entries()) {
-    // Malformed entries are reported once, by checkFootprintOverlaps.
+    // Malformed entries are reported once, by the overlap check.
     if (!machine || !isValidCoord(machine.coord) || !hasValidCells(machine)) continue;
 
     const isFixed = Boolean(machine.locked);
+    const machineIndex = 'origin' in machine && machine.origin.startsWith('player:')
+      ? Number(machine.origin.slice('player:'.length))
+      : undefined;
+
     for (const coord of getMachineOccupiedHexes(machine)) {
       const key = hexKey(coord);
       const isCentre = coord.q === machine.coord.q && coord.r === machine.coord.r;
@@ -409,38 +536,63 @@ export function checkFootprintPlacement(
         : `Клетка (${coord.q}, ${coord.r}) — ${machineLabel(machine, index)}`;
 
       if (!platformHexes.has(key)) {
-        errors.push(
-          legacyCentre
-            ? `${subject} находится вне платформы`
-            : `${subject}: вне платформы`,
+        issues.push(
+          issue(
+            'outside-platform',
+            legacyCentre ? `${subject} находится вне платформы` : `${subject}: вне платформы`,
+            [coord],
+            machineIndex,
+          ),
         );
       } else if (narrowGapHexes.has(key)) {
-        errors.push(
-          legacyCentre
-            ? `${subject} установлен над узким разломом`
-            : `${subject}: над узким разломом, площадкой быть не может`,
+        issues.push(
+          issue(
+            'narrow-chasm',
+            legacyCentre
+              ? `${subject} установлен над узким разломом`
+              : `${subject}: над узким разломом, площадкой быть не может`,
+            [coord],
+            machineIndex,
+          ),
         );
       }
     }
   }
 
-  return errors;
+  return issues;
+}
+
+export function checkFootprintPlacement(
+  machines: Array<PlacedMachine | FinalMachine>,
+  platformHexes: ReadonlySet<HexKey>,
+  narrowGapHexes: ReadonlySet<HexKey>,
+): string[] {
+  return issueMessages(checkFootprintPlacementIssues(machines, platformHexes, narrowGapHexes));
 }
 
 /**
- * Combined footprint validation used by `validateLevelPlacement`: padding
- * geometry of every occupied cell plus overlap detection across the definitive
+ * Combined footprint validation used by `validateLevelPlacement`: pad geometry
+ * of every occupied cell plus overlap detection across the definitive
  * arrangement.
  */
+export function validateLevelFootprintIssues(
+  level: LevelDefinition,
+  blocks: FootprintMachine[],
+  platformHexes: ReadonlySet<HexKey>,
+  narrowGapHexes: ReadonlySet<HexKey>,
+): PlacementIssue[] {
+  const finalPlacement = resolveFinalPlacement(level, blocks, platformHexes, narrowGapHexes);
+  return [
+    ...checkFootprintPlacementIssues(finalPlacement, platformHexes, narrowGapHexes),
+    ...checkFootprintOverlapIssues(level, blocks),
+  ];
+}
+
 export function validateLevelFootprints(
   level: LevelDefinition,
   blocks: FootprintMachine[],
   platformHexes: ReadonlySet<HexKey>,
   narrowGapHexes: ReadonlySet<HexKey>,
 ): string[] {
-  const finalPlacement = resolveFinalPlacement(level, blocks, platformHexes, narrowGapHexes);
-  return [
-    ...checkFootprintPlacement(finalPlacement, platformHexes, narrowGapHexes),
-    ...checkFootprintOverlaps(level, blocks),
-  ];
+  return issueMessages(validateLevelFootprintIssues(level, blocks, platformHexes, narrowGapHexes));
 }
