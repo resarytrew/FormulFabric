@@ -10,7 +10,18 @@ export { getRotationSweptHexes } from './rotation';
 export { matchComponentToPattern } from './patterns';
 import { validateLevelPlacement, createWorldFromLevel } from './world';
 export { SOLID_MACHINE_TYPES, createMachineInstance, getMachineFootprint, getMachineOccupiedHexes, getBlockedPlacementInfo, validateLevelPlacement, createWorldFromLevel } from './world';
-export { checkFootprintOverlaps, checkFootprintPlacement, resolveFinalPlacement, validateLevelFootprints } from './placement-validation';
+export {
+  checkFootprintOverlaps,
+  checkFootprintPlacement,
+  lintPattern,
+  getMachineConfig,
+  isValidCoord,
+  resolveFinalPlacement,
+  validateLevelFootprints,
+  type FinalMachine,
+  type PlacedMachine,
+} from './placement-validation';
+export { findLayoutConflicts, findLayoutConflictsForLevel, type StoredBlock } from './layout-conflicts';
 export { MIN_INT_VALUE, MAX_INT_VALUE, evaluateFilterRule, isInRange, getExactDiv2, getExactSqrt, euclideanDivMod } from './operations';
 import { hexKey } from './hex-math';
 import type {

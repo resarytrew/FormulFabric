@@ -3,13 +3,17 @@ import assert from 'node:assert/strict';
 import {
   checkFootprintOverlaps,
   createWorldFromLevel,
+  findLayoutConflicts,
+  findLayoutConflictsForLevel,
   getBlockedPlacementInfo,
   getMachineFootprint,
   getMachineOccupiedHexes,
+  lintPattern,
   resolveFinalPlacement,
   validateLevelFootprints,
   validateLevelPlacement,
 } from './hex-engine';
+import type { PlacedBlock } from '../services/storage';
 import { generateHexDisk, hexKey } from './hex-math';
 import { ALL_PUZZLE_LEVELS, SANDBOX_LEVEL } from './levels';
 import type { LevelDefinition, MachineConfig, MachineType, TargetPattern } from './types';
@@ -17,8 +21,8 @@ import type { LevelDefinition, MachineConfig, MachineType, TargetPattern } from 
 const TWO_NODE_PATTERN: TargetPattern = {
   mode: 'exact',
   nodes: [
-    { offset: { q: 0, r: 0 } },
-    { offset: { q: 1, r: 0 } },
+    { offset: { q: 0, r: 0 }, value: 1 },
+    { offset: { q: 1, r: 0 }, value: 2 },
   ],
   edges: [{ fromIdx: 0, toIdx: 1 }],
   rotationInvariant: false,
@@ -65,7 +69,7 @@ test('getMachineFootprint covers every receiver pad and the centre for single-he
     coord: { q: 2, r: -1 },
     config: {
       ...TWO_PAD_SINK.config,
-      targetPattern: { ...TWO_NODE_PATTERN, nodes: [{ offset: { q: 1, r: 0 } }], edges: [] },
+      targetPattern: { ...TWO_NODE_PATTERN, nodes: [{ offset: { q: 1, r: 0 }, value: 2 }], edges: [] },
     },
   };
   assert.deepEqual(getMachineOccupiedHexes(offsetOnly), [
@@ -88,7 +92,16 @@ test('нельзя перекрыть площадку приёмника', () =
       config: {
         dir: 0,
         sinkId: 'test',
-        targetPattern: TWO_NODE_PATTERN,
+        targetPattern: {
+          mode: 'exact',
+          nodes: [
+            { offset: { q: 0, r: 0 } },
+            { offset: { q: 1, r: 0 } },
+          ],
+          edges: [{ fromIdx: 0, toIdx: 1 }],
+          rotationInvariant: false,
+          label: 'Два числа',
+        },
       },
     },
     {
@@ -222,7 +235,7 @@ test('invalid coordinates inside a receiver pattern are reported, not crashed on
       sinkId: 'test',
       targetPattern: {
         ...TWO_NODE_PATTERN,
-        nodes: [{ offset: { q: 0.5, r: 0 } }],
+        nodes: [{ offset: { q: 0.5, r: 0 }, value: 1 }],
       } as TargetPattern,
     },
   };
@@ -274,4 +287,203 @@ test('getBlockedPlacementInfo only lets a receiver use its own pads', () => {
   assert.equal(getBlockedPlacementInfo(world, { q: 1, r: 0 }, { allowedOwnerId: 'm_someone_else' }).blocked, true);
   // The centre stays closed to everything but its own fixture rules.
   assert.equal(getBlockedPlacementInfo(world, { q: 0, r: 0 }, { allowedOwnerId: sinkId }).blocked, true);
+});
+
+test('unlocked sink is replaced in actual world', () => {
+  const blocks = [{
+    type: 'conveyor' as const,
+    coord: { q: 3, r: 0 },
+    config: { dir: 0 as const },
+  }];
+
+  assert.deepEqual(
+    validateLevelPlacement(SANDBOX_LEVEL, blocks),
+    [],
+  );
+
+  const world = createWorldFromLevel(SANDBOX_LEVEL, blocks);
+
+  assert.equal(world.machines.get('3,0')?.type, 'conveyor');
+  assert.equal(world.sinkFootprintHexes.has('3,0'), false);
+});
+
+test('validated layout and built world always agree', () => {
+  // Every accepted layout must produce exactly the machines the resolver
+  // predicted — no preset may be resurrected behind a replacement.
+  const layouts: Array<{ name: string; blocks: Array<{ type: MachineType; coord: { q: number; r: number }; config: MachineConfig }> }> = [
+    {
+      name: 'replace preset sink',
+      blocks: [{ type: 'conveyor', coord: { q: 3, r: 0 }, config: { dir: 0 } }],
+    },
+    {
+      name: 'replace preset spawner',
+      blocks: [{ type: 'conveyor', coord: { q: -3, r: 0 }, config: { dir: 0 } }],
+    },
+    {
+      name: 'replace both presets and add traffic',
+      blocks: [
+        { type: 'conveyor', coord: { q: -3, r: 0 }, config: { dir: 0 } },
+        { type: 'add1', coord: { q: -2, r: 0 }, config: { dir: 0 } },
+        { type: 'conveyor', coord: { q: 3, r: 0 }, config: { dir: 0 } },
+      ],
+    },
+    {
+      name: 'keep everything',
+      blocks: [{ type: 'conveyor', coord: { q: 0, r: 0 }, config: { dir: 0 } }],
+    },
+  ];
+
+  for (const layout of layouts) {
+    assert.deepEqual(validateLevelPlacement(SANDBOX_LEVEL, layout.blocks), [], `${layout.name}: must be valid`);
+    const world = createWorldFromLevel(SANDBOX_LEVEL, layout.blocks);
+    assert.notEqual(world.status, 'error', `${layout.name}: must build`);
+
+    const resolved = resolveFinalPlacement(
+      SANDBOX_LEVEL,
+      layout.blocks,
+      world.platformHexes,
+      world.narrowGapHexes,
+    );
+    assert.equal(world.machines.size, resolved.length, `${layout.name}: machine count`);
+    for (const machine of resolved) {
+      const built = world.machines.get(hexKey(machine.coord));
+      assert.equal(built?.type, machine.type, `${layout.name}: ${hexKey(machine.coord)} holds ${machine.type}`);
+      assert.equal(built?.locked, machine.locked, `${layout.name}: ${hexKey(machine.coord)} lock flag`);
+    }
+  }
+});
+
+test('a dragged receiver may use its own pads, and the whole layout is revalidated', () => {
+  // A player-owned multi-cell receiver: the editor lets it be dragged within its
+  // own footprint, but the resulting layout must still pass full validation.
+  const level = emptyLevel({ availableTools: ['sink', 'conveyor'] });
+  const placed = { type: 'sink' as const, coord: { q: 0, r: 0 }, config: TWO_PAD_SINK.config };
+  const world = createWorldFromLevel(level, [placed]);
+  const sinkId = world.machines.get('0,0')!.id;
+  const ownPad = { q: 1, r: 0 };
+
+  // Own pad of the moving receiver: allowed via its own owner id only.
+  assert.equal(getBlockedPlacementInfo(world, ownPad, { allowedOwnerId: sinkId }).blocked, false);
+  assert.equal(getBlockedPlacementInfo(world, ownPad, { allowedOwnerId: undefined }).blocked, true);
+  assert.equal(getBlockedPlacementInfo(world, ownPad, { allowedOwnerId: 'm_other' }).blocked, true);
+
+  // Dragging it one hex east: still valid, and the only sink in the world.
+  const moved = [{ ...placed, coord: { q: 1, r: 0 } }];
+  assert.deepEqual(validateLevelPlacement(level, moved), []);
+  const movedWorld = createWorldFromLevel(level, moved);
+  assert.equal(movedWorld.machines.size, 1);
+  assert.equal(movedWorld.machines.get('1,0')?.type, 'sink');
+  assert.equal(movedWorld.sinkFootprintHexes.get('2,0'), movedWorld.machines.get('1,0')?.id);
+
+  // A machine already sitting inside the new footprint rejects the drag.
+  const blockedMove = [{ ...placed, coord: { q: 1, r: 0 } }, { type: 'conveyor' as const, coord: { q: 2, r: 0 }, config: { dir: 0 as const } }];
+  assert.ok(
+    validateLevelPlacement(level, blockedMove).some((e) => e.includes('Пересечение')),
+    'the moved receiver must not claim a hex occupied by another machine',
+  );
+});
+
+test('pattern linter reports structural corruption of a receiver pattern', () => {
+  const base: TargetPattern = {
+    mode: 'exact',
+    nodes: [
+      { offset: { q: 0, r: 0 }, value: 1 },
+      { offset: { q: 1, r: 0 }, value: 2 },
+    ],
+    edges: [{ fromIdx: 0, toIdx: 1 }],
+    rotationInvariant: false,
+    label: 'ok',
+  };
+  assert.deepEqual(lintPattern(base), []);
+
+  assert.ok(lintPattern({ ...base, nodes: [...base.nodes, { offset: { q: 1, r: 0 }, value: 3 }] })
+    .some((e) => e.includes('повторяет координаты')));
+  assert.ok(lintPattern({ ...base, edges: [{ fromIdx: 0, toIdx: 7 }] })
+    .some((e) => e.includes('несуществующую вершину')));
+  assert.ok(lintPattern({ ...base, edges: [{ fromIdx: 1, toIdx: 0 }, { fromIdx: 0, toIdx: 1 }] })
+    .some((e) => e.includes('дублирует')));
+  assert.ok(lintPattern({ ...base, edges: [{ fromIdx: 0, toIdx: 0 }] })
+    .some((e) => e.includes('саму с собой')));
+  assert.ok(lintPattern({ ...base, expectedNodeValues: [[1, 2], [3]] })
+    .some((e) => e.includes('описывает 1 звеньев')));
+  assert.ok(lintPattern({ ...base, mode: 'sum_shape' })
+    .some((e) => e.includes('требуемую сумму')));
+  assert.ok(lintPattern({ ...base, mode: 'growth_ladder' })
+    .some((e) => e.includes('шаг роста')));
+  assert.deepEqual(lintPattern({ ...base, nodes: [] }), ['образец приёмника не содержит ни одной вершины']);
+});
+
+test('corrupted receiver config is reported instead of throwing', () => {
+  const level = emptyLevel({ availableTools: ['sink'] });
+  const noConfig = {
+    type: 'sink' as const,
+    coord: { q: 0, r: 0 },
+    config: undefined as unknown as MachineConfig,
+  };
+  assert.doesNotThrow(() => getMachineFootprint({ ...noConfig }));
+  assert.deepEqual(getMachineFootprint({ ...noConfig }), [{ q: 0, r: 0 }]);
+  const errors = validateLevelPlacement(level, [noConfig]);
+  assert.ok(errors.some((e) => e.includes('Некорректные данные')));
+  assert.equal(createWorldFromLevel(level, [noConfig]).status, 'error');
+
+  const noPattern = { type: 'sink' as const, coord: { q: 0, r: 0 }, config: { dir: 0 as const, sinkId: 'x' } };
+  assert.ok(validateLevelPlacement(level, [noPattern]).some((e) => e.includes('не содержит образца')));
+  assert.equal(createWorldFromLevel(level, [noPattern]).status, 'error');
+});
+
+test('stored layout conflicts are reported without touching the saved blocks', () => {
+  const level = emptyLevel({ availableTools: ['sink', 'conveyor'], presetMachines: [TWO_PAD_SINK] });
+  const stored: PlacedBlock[] = [
+    { type: 'conveyor', coord: { q: 0, r: 1 }, config: { dir: 0 } as MachineConfig },
+    { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } as MachineConfig },
+  ];
+  const snapshot = JSON.stringify(stored);
+
+  const conflicts = findLayoutConflictsForLevel(level, stored);
+  assert.ok(conflicts.some((c) => c.includes('Пересечение')));
+  // Reporting is side-effect free: the saved layout is preserved verbatim.
+  assert.equal(JSON.stringify(stored), snapshot);
+
+  assert.deepEqual(findLayoutConflicts(stored), []);
+  assert.ok(findLayoutConflicts([
+    { type: 'conveyor', coord: { q: 0, r: 0 }, config: { dir: 0 } as MachineConfig },
+    { type: 'conveyor', coord: { q: 0, r: 0 }, config: { dir: 1 } as MachineConfig },
+  ]).some((c) => c.includes('Дублирующий')));
+});
+
+test('an already-conflicted layout can still be repaired', () => {
+  // Regression for the editor guard: an edit that removes a conflict must be
+  // accepted even though the starting layout is invalid, and the world must
+  // still build from the repaired layout.
+  const level = emptyLevel({ availableTools: ['sink', 'conveyor'], presetMachines: [TWO_PAD_SINK] });
+  const conflicted: PlacedBlock[] = [
+    { type: 'conveyor', coord: { q: 1, r: 0 }, config: { dir: 0 } as MachineConfig },
+  ];
+  assert.ok(validateLevelPlacement(level, conflicted).some((e) => e.includes('Пересечение')));
+
+  const repaired: PlacedBlock[] = [];
+  assert.deepEqual(validateLevelPlacement(level, repaired), []);
+  const world = createWorldFromLevel(level, repaired);
+  assert.notEqual(world.status, 'error');
+  assert.equal(world.machines.size, 1, 'only the locked fixture remains');
+});
+
+test('resolved arrangement never keeps a preset the player partially took over', () => {
+  const level = emptyLevel({
+    availableTools: ['sink', 'conveyor'],
+    presetMachines: [{ ...TWO_PAD_SINK, locked: false }],
+  });
+  // Player block on the preset's side pad: the preset must give way, otherwise
+  // the world would contain a receiver missing one of its pads.
+  const blocks = [{ type: 'conveyor' as const, coord: { q: 1, r: 0 }, config: { dir: 0 as const } }];
+  const resolved = resolveFinalPlacement(level, blocks);
+  assert.deepEqual(resolved.map((m) => `${m.type}@${hexKey(m.coord)}`), ['conveyor@1,0']);
+
+  const world = createWorldFromLevel(level, blocks);
+  assert.notEqual(world.status, 'error');
+  assert.equal(world.machines.size, 1);
+  assert.equal(world.machines.get('1,0')?.type, 'conveyor');
+  // A locked preset is never displaced, which stays a reported conflict.
+  const lockedLevel = emptyLevel({ availableTools: ['sink', 'conveyor'], presetMachines: [TWO_PAD_SINK] });
+  assert.ok(validateLevelPlacement(lockedLevel, blocks).some((e) => e.includes('Пересечение')));
 });

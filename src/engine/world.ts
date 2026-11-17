@@ -1,6 +1,6 @@
 import { generateHexDisk, hexKey } from './hex-math';
 import { MIN_INT_VALUE, MAX_INT_VALUE } from './operations';
-import { getMachineFootprint, validateLevelFootprints } from './placement-validation';
+import { getMachineFootprint, lintPattern, resolveFinalPlacement, validateLevelFootprints } from './placement-validation';
 import type { AxialCoord, HexKey, LevelDefinition, MachineConfig, MachineInstance, MachineType, SimulationWorld } from './types';
 
 export { getMachineFootprint, getMachineOccupiedHexes } from './placement-validation';
@@ -116,6 +116,17 @@ export function validateLevelPlacement(
       continue;
     }
     const key = hexKey(b.coord);
+    if (b.type === 'sink') {
+      // A receiver without a usable pattern would silently become a single-hex
+      // sink in the world, so reject it while the layout is still being checked.
+      if (!b.config.targetPattern) {
+        errors.push(`Приёмник на (${b.coord.q}, ${b.coord.r}) не содержит образца`);
+      } else {
+        for (const patternError of lintPattern(b.config.targetPattern)) {
+          errors.push(`Приёмник на (${b.coord.q}, ${b.coord.r}): ${patternError}`);
+        }
+      }
+    }
     if (!Number.isInteger(b.config.dir) || b.config.dir < 0 || b.config.dir > 5 ||
       (b.config.altDir !== undefined && (!Number.isInteger(b.config.altDir) || b.config.altDir < 0 || b.config.altDir > 5))) {
       errors.push(`Некорректное направление механизма на (${b.coord.q}, ${b.coord.r})`);
@@ -184,73 +195,58 @@ export function createWorldFromLevel(
   }
   const machines = new Map<HexKey, MachineInstance>();
   const sinkFootprintHexes = new Map<HexKey, string>();
+  const visitedHexes = new Set<HexKey>();
+
+  // Build from the definitive arrangement: exactly the machines the validators
+  // inspected, in the same order, so presets are never resurrected behind a
+  // player replacement and IDs stay predictable (m_1, m_2, …).
+  const finalPlacement = resolveFinalPlacement(level, playerMachines, platformHexes, narrowGapHexes);
 
   let machineSeq = 1;
-  for (const pm of level.presetMachines) {
-    const key = hexKey(pm.coord);
-    const override = spawnerOverrides?.[key];
-    let cfg: MachineConfig = override
-      ? {
-          ...pm.config,
+  for (const machine of finalPlacement) {
+    const key = hexKey(machine.coord);
+    let cfg: MachineConfig = machine.config;
+
+    if (machine.origin.startsWith('preset:')) {
+      const presetIndex = Number(machine.origin.slice('preset:'.length));
+      const presetConfig = level.presetMachines[presetIndex]?.config ?? machine.config;
+      const override = spawnerOverrides?.[key];
+      if (override) {
+        cfg = {
+          ...presetConfig,
           sequence: [...override.sequence],
-          spawnInterval: override.spawnInterval ?? pm.config.spawnInterval,
-        }
-      : pm.config;
+          spawnInterval: override.spawnInterval ?? presetConfig.spawnInterval,
+        };
+      } else {
+        cfg = presetConfig;
+      }
+    } else if (machine.type === 'divmod' && level.fixedDivisor !== undefined) {
+      cfg = { ...machine.config, divisor: level.fixedDivisor };
+    }
 
-    if (pm.type === 'sink' && pm.config.sinkId && pm.config.targetPattern) {
-      const expVals = expectedSinkValues?.[pm.config.sinkId];
-      const expPolys = expectedSinkPolymers?.[pm.config.sinkId];
+    if (machine.type === 'sink' && cfg.sinkId && cfg.targetPattern) {
+      const expVals = expectedSinkValues?.[cfg.sinkId];
+      const expPolys = expectedSinkPolymers?.[cfg.sinkId];
       if (expVals || expPolys) {
         cfg = {
           ...cfg,
           targetPattern: {
-            ...pm.config.targetPattern,
-            expectedValues: expVals ? [...expVals] : pm.config.targetPattern.expectedValues,
+            ...cfg.targetPattern,
+            expectedValues: expVals ? [...expVals] : cfg.targetPattern.expectedValues,
             expectedNodeValues: expPolys
               ? expPolys.map((p) => [...p])
-              : pm.config.targetPattern.expectedNodeValues,
+              : cfg.targetPattern.expectedNodeValues,
           },
         };
       }
     }
 
-    const inst = createMachineInstance(`m_${machineSeq++}`, pm.type, pm.coord, pm.locked, cfg);
+    const inst = createMachineInstance(`m_${machineSeq++}`, machine.type, machine.coord, machine.locked, cfg);
     machines.set(key, inst);
     addSinkFootprintEntries(sinkFootprintHexes, inst.id, inst);
-  }
-
-  const visitedHexes = new Set<HexKey>();
-  for (const um of playerMachines) {
-    const key = hexKey(um.coord);
-    if (!platformHexes.has(key) || narrowGapHexes.has(key) || sinkFootprintHexes.has(key)) {
-      continue;
+    if (!machine.origin.startsWith('preset:')) {
+      visitedHexes.add(key);
     }
-    const existing = machines.get(key);
-    if (existing?.locked) continue;
-    let cfg = um.config;
-    if (um.type === 'divmod' && level.fixedDivisor !== undefined) {
-      cfg = { ...cfg, divisor: level.fixedDivisor };
-    }
-    if (um.type === 'sink' && um.config.sinkId && um.config.targetPattern) {
-      const expVals = expectedSinkValues?.[um.config.sinkId];
-      const expPolys = expectedSinkPolymers?.[um.config.sinkId];
-      if (expVals || expPolys) {
-        cfg = {
-          ...cfg,
-          targetPattern: {
-            ...um.config.targetPattern,
-            expectedValues: expVals ? [...expVals] : um.config.targetPattern.expectedValues,
-            expectedNodeValues: expPolys
-              ? expPolys.map((p) => [...p])
-              : um.config.targetPattern.expectedNodeValues,
-          },
-        };
-      }
-    }
-    const inst = createMachineInstance(`m_${machineSeq++}`, um.type, um.coord, false, cfg);
-    machines.set(key, inst);
-    addSinkFootprintEntries(sinkFootprintHexes, inst.id, inst);
-    visitedHexes.add(key);
   }
 
   let requiredDeliveries = level.requiredDeliveries;
