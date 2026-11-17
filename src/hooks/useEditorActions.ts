@@ -1,30 +1,14 @@
 import { useCallback, type Dispatch, type SetStateAction, type RefObject } from 'react';
 import { sound } from '../audio/sound';
-import { createWorldFromLevel, getBlockedPlacementInfo } from '../engine/hex-engine';
+import { getBlockedPlacementInfo } from '../engine/hex-engine';
 import { hexEqual, hexKey, rotateDir } from '../engine/hex-math';
 import { TOOL_METADATA } from '../engine/levels';
 import type { AxialCoord, HexDir, LevelDefinition, MachineConfig, MachineType, RotatorMode, SimulationWorld } from '../engine/types';
 import type { VariantSlotId } from '../models/ui';
 import { getBlocksSignature } from '../services/blockSignature';
+import { prepareSavedVariant } from '../services/restoreVariant';
 import { saveVariants, type LevelVariantsMap, type PlacedBlock } from '../services/storage';
 import type { AppState } from './useSimulationClock';
-
-function sanitizeBlocksForLevel(lvl: LevelDefinition, blocks: PlacedBlock[]): PlacedBlock[] {
-  const baseWorld = createWorldFromLevel(lvl, []);
-  const seen = new Set<string>();
-  return blocks
-    .filter((b) => {
-      const k = hexKey(b.coord);
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return !getBlockedPlacementInfo(baseWorld, b.coord).blocked;
-    })
-    .map((b) => ({
-      type: b.type,
-      coord: { ...b.coord },
-      config: structuredClone(b.config),
-    }));
-}
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
 interface EditorOptions {
@@ -100,6 +84,13 @@ export function useEditorActions({ isSimPlaying, appState, inspectedCoord, selec
     (slot: VariantSlotId) => {
       if (isSimPlaying || slot === activeVariant) return;
       const lvlId = currentLevelRef.current.id;
+      const savedSlot = variantsMap[lvlId]?.[slot];
+      const restored = prepareSavedVariant(currentLevelRef.current, savedSlot === undefined ? [] : savedSlot?.blocks);
+      if (!restored.ok) {
+        sound.playError();
+        showBudgetWarning(restored.reason);
+        return;
+      }
       // Auto-snapshot current non-empty work into previous slot before switching
       const currBlocks = structuredClone(playerBlocksRef.current);
       const nextVariants = structuredClone(variantsMap);
@@ -118,15 +109,12 @@ export function useEditorActions({ isSimPlaying, appState, inspectedCoord, selec
       saveVariants(nextVariants);
       setVariantsMap(nextVariants);
 
-      const targetBlocks = lvlVars[slot]?.blocks
-        ? sanitizeBlocksForLevel(currentLevelRef.current, lvlVars[slot]!.blocks)
-        : [];
       setActiveVariant(slot);
       setInspectedCoord(null);
-      commitBlocks(targetBlocks, true);
+      commitBlocks(restored.blocks, true);
       sound.playStep();
     },
-    [isSimPlaying, activeVariant, variantsMap, commitBlocks],
+    [isSimPlaying, activeVariant, variantsMap, commitBlocks, showBudgetWarning],
   );
 
   const handleHexClick = useCallback(
