@@ -1,9 +1,9 @@
 import { sortedMachines } from './deterministic-order';
 import { pushEvent, triggerError } from './events';
-import { hexEqual, hexKey, hexNeighbor } from './hex-math';
+import { hexKey, hexNeighbor } from './hex-math';
 import { isInRange } from './operations';
 import { SOLID_MACHINE_TYPES } from './world';
-import type { SimulationWorld, Token } from './types';
+import type { HexKey, SimulationWorld, Token } from './types';
 
 export function activateSpawners(world: SimulationWorld, movedTokenIds: Set<string>): boolean {
   // Activate Spawners (spawn onto neighbor hex if empty).
@@ -15,6 +15,35 @@ export function activateSpawners(world: SimulationWorld, movedTokenIds: Set<stri
   // видит гекс занятым и ждёт: `spawnIndex`, значение из последовательности и
   // `cooldown`, накопленный до выпуска, не теряются — выпуск произойдёт в том
   // такте, когда гекс освободится.
+  //
+  // PR #4C: занятость выходов проверяется по локальному индексу `Set<HexKey>`,
+  // построенному за один проход по сферам, вместо перебора всех сфер на каждый
+  // источник (было O(S·T), стало O(T + S)). Индекс создаётся по координатам
+  // ПОСЛЕ фазы движения — `activateSpawners` вызывается из `processMechanisms`
+  // после `applyMovement`, поэтому гекс, освобождённый в этом такте, доступен
+  // источнику сразу. После успешного выпуска координата сразу добавляется в
+  // индекс: иначе два источника могли бы выпустить сферы в одну клетку.
+  // Глобального индекса в `SimulationWorld` нет — он живёт только на время фазы.
+  //
+  // Индекс строится при первой же проверке занятости, а не в начале функции:
+  // в тактах, где ни один источник не готов выпускать (перезарядка, исчерпанная
+  // последовательность, отсутствие источников), построение не выполняется
+  // вовсе. Это сохраняет прежнюю стоимость для уровней без источников и для
+  // тактов ожидания, а результат не меняется: сферы в фазе только добавляются,
+  // поэтому индекс, построенный позже, содержит надмножество координат начала
+  // фазы, а все выпущенные сферы уже лежат в `world.tokens`.
+  let occupiedHexes: Set<HexKey> | null = null;
+  const occupancyIndex = (): Set<HexKey> => {
+    if (occupiedHexes === null) {
+      const index = new Set<HexKey>();
+      for (const tok of world.tokens.values()) {
+        index.add(hexKey(tok.coord));
+      }
+      occupiedHexes = index;
+    }
+    return occupiedHexes;
+  };
+
   for (const machine of sortedMachines(world)) {
     if (machine.type !== 'spawner') continue;
     const seq = machine.config.sequence ?? [];
@@ -56,11 +85,8 @@ export function activateSpawners(world: SimulationWorld, movedTokenIds: Set<stri
       return false;
     }
 
-    // Check if spawn hex currently occupied
-    const occupied = Array.from(world.tokens.values()).some((t) =>
-      hexEqual(t.coord, spawnCoord),
-    );
-    if (occupied) {
+    // Check if spawn hex currently occupied (O(1) по индексу фазы).
+    if (occupancyIndex().has(spawnKey)) {
       pushEvent(world, {
         type: 'blocked',
         coord: spawnCoord,
@@ -92,6 +118,10 @@ export function activateSpawners(world: SimulationWorld, movedTokenIds: Set<stri
     };
     world.tokens.set(newTok.id, newTok);
     movedTokenIds.add(newTok.id);
+    // Индекс обязан оставаться актуальным внутри фазы: второй источник,
+    // направленный на тот же гекс, должен увидеть его занятым (правило общего
+    // выхода сохраняется).
+    occupancyIndex().add(spawnKey);
     machine.state.spawnIndex += 1;
     machine.state.cooldown = Math.max(0, (machine.config.spawnInterval ?? 2) - 1);
     machine.state.activeFlashTicks = 1;

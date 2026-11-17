@@ -6,16 +6,146 @@ import { hexEqual, hexKey, hexNeighbor, parseHexKey, rotateAroundPivot } from '.
 import { getRotationSweptHexes } from './rotation';
 import { SOLID_MACHINE_TYPES } from './world';
 import type { ComponentIntent, ThrustTier } from './movement-types';
-import type { AxialCoord, HexKey, SimulationWorld } from './types';
+import type { AxialCoord, HexKey, SimulationWorld, Token } from './types';
 
-/** Пары «сфера → предложенная координата» в каноническом порядке сфер. */
-function orderedProposedEntries(
+/** Найденная пара встречного обмена: сферы меняются стартовыми клетками. */
+export interface HeadOnSwapConflict {
+  firstId: string;
+  secondId: string;
+  /** Стартовая (и целевая для партнёра) клетка первой сферы в каноническом порядке. */
+  firstCoord: AxialCoord;
+  /** Стартовая (и целевая для первой сферы) клетка второй сферы. */
+  secondCoord: AxialCoord;
+}
+
+/**
+ * Локальный индекс стартовой занятости (PR #4C): гекс на начало такта → сфера.
+ *
+ * Для допустимого состояния (инвариант B: не более одной сферы на гексе) каждая
+ * запись — одиночная. `extraAtStart` заполняется только на повреждённых данных,
+ * чтобы проверка обмена оставалась эквивалентной старому двойному циклу и там:
+ * на гексе может оказаться несколько сфер, и партнёром считается первая, которую
+ * нашёл бы перебор в каноническом порядке.
+ */
+export interface TokenStartIndex {
+  tokenAtStart: Map<HexKey, string>;
+  extraAtStart: Map<HexKey, string[]>;
+}
+
+/** Построение индекса стартовой занятости за один проход по сферам — O(n). */
+export function buildTokenStartIndex(orderedTokens: readonly Token[]): TokenStartIndex {
+  const tokenAtStart = new Map<HexKey, string>();
+  const extraAtStart = new Map<HexKey, string[]>();
+  for (const tok of orderedTokens) {
+    const key = hexKey(tok.coord);
+    if (!tokenAtStart.has(key)) {
+      tokenAtStart.set(key, tok.id);
+      continue;
+    }
+    const extra = extraAtStart.get(key);
+    if (extra) extra.push(tok.id);
+    else extraAtStart.set(key, [tok.id]);
+  }
+  return { tokenAtStart, extraAtStart };
+}
+
+/**
+ * Проверка встречного обмена за O(n) после канонической сортировки.
+ *
+ * Эквивалентность старому двойному циклу:
+ *
+ *  - старый перебор брал первую пару `(i, j)`, `i < j`, в каноническом порядке
+ *    сфер, для которой обе сферы сдвинулись и `new_i == old_j && new_j == old_i`;
+ *  - такой обмен — инволюция: у сферы не больше одного партнёра, поэтому пары
+ *    не пересекаются, и первая найденная пара — это первая (в каноническом
+ *    порядке) сфера, участвующая в обмене, вместе со своим партнёром;
+ *  - партнёр — единственная сфера, стоявшая на начало такта в целевой клетке
+ *    (`tokenAtStart`), поэтому индексный поиск находит ровно ту же пару, а
+ *    подсветка `[old_i, old_j]` сохраняет прежний порядок координат.
+ *
+ * Функция только ищет конфликт, поэтому её можно вызывать на уже отсортированном
+ * списке сфер: лишняя сортировка не нужна (см. `resolveMovement`).
+ */
+export function findHeadOnSwapConflict(
   world: SimulationWorld,
+  index: TokenStartIndex,
+  orderedTokens: readonly Token[],
+  tokenToComponent: Map<string, ConnectedComponent>,
+  resolvedIntentByComp: Map<string, ComponentIntent | null>,
   proposedCoordByToken: Map<string, AxialCoord>,
-): Array<[string, AxialCoord]> {
-  return sortedTokens(world)
-    .filter((tok) => proposedCoordByToken.has(tok.id))
-    .map((tok) => [tok.id, proposedCoordByToken.get(tok.id)!] as [string, AxialCoord]);
+): HeadOnSwapConflict | null {
+  for (const tok of orderedTokens) {
+    const next = proposedCoordByToken.get(tok.id);
+    if (!next) continue;
+    // Сфера остаётся на месте — обмена с ней быть не может.
+    if (hexEqual(tok.coord, next)) continue;
+
+    const targetKey = hexKey(next);
+    const first = index.tokenAtStart.get(targetKey);
+    if (first === undefined) continue;
+
+    const extra = index.extraAtStart.get(targetKey);
+    if (extra) {
+      for (const otherId of [first, ...extra]) {
+        const conflict = swapConflictWith(
+          world,
+          tok,
+          otherId,
+          tokenToComponent,
+          resolvedIntentByComp,
+          proposedCoordByToken,
+        );
+        if (conflict) return conflict;
+      }
+      continue;
+    }
+
+    if (first === tok.id) continue;
+    const conflict = swapConflictWith(
+      world,
+      tok,
+      first,
+      tokenToComponent,
+      resolvedIntentByComp,
+      proposedCoordByToken,
+    );
+    if (conflict) return conflict;
+  }
+  return null;
+}
+
+/** Партнёр обмена для сферы `tok` — или `null`, если обмена (или нарушения) нет. */
+function swapConflictWith(
+  world: SimulationWorld,
+  tok: Token,
+  otherId: string,
+  tokenToComponent: Map<string, ConnectedComponent>,
+  resolvedIntentByComp: Map<string, ComponentIntent | null>,
+  proposedCoordByToken: Map<string, AxialCoord>,
+): HeadOnSwapConflict | null {
+  if (otherId === tok.id) return null;
+  const other = world.tokens.get(otherId);
+  if (!other) return null;
+  const otherNext = proposedCoordByToken.get(otherId);
+  if (!otherNext) return null;
+  // Обе сферы должны сдвинуться, иначе это не обмен, а наложение.
+  if (hexEqual(other.coord, otherNext)) return null;
+  if (!hexEqual(otherNext, tok.coord)) return null;
+
+  const intent1 = resolvedIntentByComp.get(tokenToComponent.get(tok.id)!.id);
+  const intent2 = resolvedIntentByComp.get(tokenToComponent.get(otherId)!.id);
+  const validSwapperPair =
+    intent1?.kind === 'swap' &&
+    intent2?.kind === 'swap' &&
+    hexEqual(intent1.pivot, intent2.pivot);
+  if (validSwapperPair) return null;
+
+  return {
+    firstId: tok.id,
+    secondId: otherId,
+    firstCoord: { ...tok.coord },
+    secondCoord: { ...other.coord },
+  };
 }
 
 export function resolveMovement(world: SimulationWorld, components: ConnectedComponent[], tokenToComponent: Map<string, ConnectedComponent>, intentsByComp: Map<string, ComponentIntent[]>): { resolvedIntentByComp: Map<string, ComponentIntent | null>; proposedCoordByToken: Map<string, AxialCoord>; rotationInfoByToken: Map<string, { pivot: AxialCoord; angleDelta: number } | undefined> } | null {
@@ -89,8 +219,16 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
     }
   }
 
+  // Канонический порядок сфер и их предложенных координат вычисляется один раз
+  // на такт: в фазе разрешения координаты сфер не меняются, поэтому повторные
+  // сортировки в отдельных проверках не нужны (PR #4C). Порядок проверок
+  // остался прежним — край → корпус → разлом → обмен → наложение.
+  const orderedTokens = sortedTokens(world);
+  const orderedProposed = orderedTokens
+    .filter((tok) => proposedCoordByToken.has(tok.id))
+    .map((tok) => [tok.id, proposedCoordByToken.get(tok.id)!] as [string, AxialCoord]);
+
   // Check Rotator Swept-Arc Obstacles (solid machine housings & non-component spheres on swept sector)
-  const orderedProposed = orderedProposedEntries(world, proposedCoordByToken);
   for (const comp of components) {
     const intent = resolvedIntentByComp.get(comp.id);
     if (!intent || intent.kind !== 'rotate') continue;
@@ -130,7 +268,7 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
   // Порядок классов проверок не меняется (край → корпус → разлом → обмен →
   // наложение); внутри класса сферы перебираются канонически, поэтому при двух
   // независимых падениях/столкновениях в одном такте диагностика стабильна.
-  for (const [id, targetCoord] of orderedProposedEntries(world, proposedCoordByToken)) {
+  for (const [id, targetCoord] of orderedProposed) {
     const tok = world.tokens.get(id)!;
     const tKey = hexKey(targetCoord);
     if (!world.platformHexes.has(tKey)) {
@@ -194,39 +332,30 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
     }
   }
 
-  // Check edge swaps (token A moves oldA -> oldB while token B moves oldB -> oldA)
-  const tokenIds = sortedTokens(world).map((tok) => tok.id);
-  for (let i = 0; i < tokenIds.length; i++) {
-    for (let j = i + 1; j < tokenIds.length; j++) {
-      const id1 = tokenIds[i];
-      const id2 = tokenIds[j];
-      const old1 = world.tokens.get(id1)!.coord;
-      const old2 = world.tokens.get(id2)!.coord;
-      const new1 = proposedCoordByToken.get(id1)!;
-      const new2 = proposedCoordByToken.get(id2)!;
-      if (
-        !hexEqual(old1, new1) &&
-        !hexEqual(old2, new2) &&
-        hexEqual(new1, old2) &&
-        hexEqual(new2, old1)
-      ) {
-        const intent1 = resolvedIntentByComp.get(tokenToComponent.get(id1)!.id);
-        const intent2 = resolvedIntentByComp.get(tokenToComponent.get(id2)!.id);
-        const validSwapperPair =
-          intent1?.kind === 'swap' &&
-          intent2?.kind === 'swap' &&
-          hexEqual(intent1.pivot, intent2.pivot);
-        if (!validSwapperPair) {
-          triggerError(
-            world,
-            'Встречное столкновение сфер при обмене соседними гексами',
-            [old1, old2],
-            'collision',
-          );
-          return null;
-        }
-      }
-    }
+  // Check edge swaps (token A moves oldA -> oldB while token B moves oldB -> oldA).
+  //
+  // PR #4C: вместо двойного перебора всех пар сфер (n(n−1)/2 сравнений) —
+  // локальный индекс стартовой занятости и один проход по уже упорядоченному
+  // списку сфер: O(n) после канонической сортировки O(n log n). Выбор пары
+  // сохранён: `findHeadOnSwapConflict` возвращает ту же пару, которую нашёл бы
+  // перебор (первая сфера в каноническом порядке, участвующая в обмене).
+  const startIndex = buildTokenStartIndex(orderedTokens);
+  const swapConflict = findHeadOnSwapConflict(
+    world,
+    startIndex,
+    orderedTokens,
+    tokenToComponent,
+    resolvedIntentByComp,
+    proposedCoordByToken,
+  );
+  if (swapConflict) {
+    triggerError(
+      world,
+      'Встречное столкновение сфер при обмене соседними гексами',
+      [swapConflict.firstCoord, swapConflict.secondCoord],
+      'collision',
+    );
+    return null;
   }
 
   // Check target cell overlaps.
@@ -234,7 +363,7 @@ export function resolveMovement(world: SimulationWorld, components: ConnectedCom
   // в каноническом порядке: при нескольких независимых наложениях в одном такте
   // сообщение и подсветка одинаковы при любом порядке хранения в Map.
   const tokensAtProposed = new Map<HexKey, string[]>();
-  for (const [id, coord] of orderedProposedEntries(world, proposedCoordByToken)) {
+  for (const [id, coord] of orderedProposed) {
     const k = hexKey(coord);
     const arr = tokensAtProposed.get(k) ?? [];
     arr.push(id);
